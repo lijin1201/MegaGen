@@ -73,7 +73,8 @@ class NiNBlock(nn.Module):
         out = out + residual
         return out
 
-class SMA(nn.Module):
+
+class SMA2D(nn.Module):
     def __init__(
         self,
         spatial_dims: int,
@@ -82,45 +83,83 @@ class SMA(nn.Module):
         norm_name: Union[Tuple, str],
         dropout: Union[Tuple, str, float] = None,
     ) -> None:
-
+        """
+        2D Semantic-Oriented Masked Attention module.
+        """
         super().__init__()
-        self.conv1 = get_conv_layer(spatial_dims, in_channels, out_channels=3, kernel_size=1, stride=1, dropout=dropout, conv_only=True)
-        self.conv2 = get_conv_layer(spatial_dims, in_channels, out_channels=3, kernel_size=1, stride=1, dropout=dropout, conv_only=True)
-        self.conv3 = get_conv_layer(spatial_dims, in_channels, out_channels, kernel_size=1, stride=1, dropout=dropout, conv_only=True)
-        self.norm = get_norm_layer(name=norm_name, spatial_dims=spatial_dims, channels=in_channels)
+        self.conv1 = get_conv_layer(
+            spatial_dims=2,
+            in_channels=in_channels,
+            out_channels=3,
+            kernel_size=1,
+            stride=1,
+            dropout=dropout,
+            conv_only=True
+        )
+        self.conv2 = get_conv_layer(
+            spatial_dims=2,
+            in_channels=in_channels,
+            out_channels=3,
+            kernel_size=1,
+            stride=1,
+            dropout=dropout,
+            conv_only=True
+        )
+        self.conv3 = get_conv_layer(
+            spatial_dims=2,
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=1,
+            stride=1,
+            dropout=dropout,
+            conv_only=True
+        )
+        self.norm = get_norm_layer(
+            name=norm_name,
+            spatial_dims=2,
+            channels=in_channels
+        )
         self.softmax = nn.Softmax(dim=-1)
 
     def forward(self, inp):
         residual = inp
         inpu = self.norm(inp)
+
         yq = self.conv1(inpu)
         yk = self.conv2(inpu)
         yv = self.conv3(inpu)
 
-        B1, C1, D1, H1, W1 = yq.shape
-        B1, C1, D1, H1, W1 = yk.shape
-        B2, C2, D2, H2, W2 = yv.shape
+        B1, C1, H1, W1 = yq.shape
+        B2, C2, H2, W2 = yv.shape
 
-        yq = rearrange(yq, "B1 C1 D1 H1 W1 -> B1 D1 H1 W1 C1")
+        # Reshape and normalize Q
+        yq = rearrange(yq, "B C H W -> B H W C")
         yq = F.layer_norm(yq, [C1])
-        yq = yq.reshape(B1, D1*H1*W1, C1)
+        yq = yq.reshape(B1, H1 * W1, C1)
 
-        yk = rearrange(yk, "B1 C1 D1 H1 W1 -> B1 D1 H1 W1 C1")
+        # Reshape and normalize K
+        yk = rearrange(yk, "B C H W -> B H W C")
         yk = F.layer_norm(yk, [C1])
-        yk = yk.reshape(B1, D1*H1*W1, C1)
+        yk = yk.reshape(B1, H1 * W1, C1)
 
-        yv = rearrange(yv, "B2 C2 D2 H2 W2 -> B2 D2 H2 W2 C2")
+        # Reshape and normalize V
+        yv = rearrange(yv, "B C H W -> B H W C")
         yv = F.layer_norm(yv, [C2])
-        yv = yv.reshape(B2, D2*H2*W2, C2)
-        
+        yv = yv.reshape(B2, H2 * W2, C2)
+
+        # Attention
         seg_score = yq @ yk.transpose(-2, -1)
         seg_score = self.softmax(seg_score)
         feats = seg_score @ yv
-        feats = feats.reshape(B2, C2, D2, H2, W2)
+
+        # Reshape back
+        feats = feats.transpose(1, 2).reshape(B2, C2, H2, W2)
+
         out = feats + residual
         return out
 
-class UnetrUpBlockChanged(nn.Module):
+
+class UnetrUpBlockChanged2D(nn.Module):
     def __init__(
         self,
         spatial_dims: int,
@@ -130,58 +169,99 @@ class UnetrUpBlockChanged(nn.Module):
         norm_name: Union[Tuple, str],
         dropout: Union[Tuple, str, float] = None,
     ) -> None:
-
+        """
+        2D version of the Semantic-Oriented Masked Attention block.
+        """
         super().__init__()
-        self.transp_conv = get_conv_layer(spatial_dims, in_channels, out_channels, kernel_size=2, stride=2, conv_only=True, is_transposed=True)
-        self.conv1 = ConvChanged(spatial_dims, in_channels, out_channels, kernel_size=3, stride=1, norm_name=norm_name)
-        self.conv2 = ConvChanged(spatial_dims, out_channels, out_channels, kernel_size=3, stride=1, norm_name=norm_name)
-        self.conv3 = ConvChanged(spatial_dims, in_channels, out_channels, kernel_size=1, stride=1, norm_name=norm_name)
-        self.convq = get_conv_layer(spatial_dims, out_channels, out_channels=3, kernel_size=1, stride=1, dropout=dropout, conv_only=True)
+        # Transposed convolution for upsampling
+        self.transp_conv = get_conv_layer(
+            spatial_dims=2,
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=2,
+            stride=2,
+            conv_only=True,
+            is_transposed=True,
+        )
+        # Spatial convolution path
+        self.conv1 = ConvChanged(2, in_channels, out_channels, kernel_size=3, stride=1, norm_name=norm_name)
+        self.conv2 = ConvChanged(2, out_channels, out_channels, kernel_size=3, stride=1, norm_name=norm_name)
+
+        # Channel convolution path
+        self.conv3 = ConvChanged(2, in_channels, out_channels, kernel_size=1, stride=1, norm_name=norm_name)
+
+        # Query, Key, Value convolutions
+        self.convq = get_conv_layer(
+            spatial_dims=2,
+            in_channels=out_channels,
+            out_channels=3,
+            kernel_size=1,
+            stride=1,
+            dropout=dropout,
+            conv_only=True,
+        )
         self.convk = nn.Conv1d(out_channels, 3, 1)
         self.convv = nn.Conv1d(out_channels, out_channels, 1)
-        self.linear = nn.Linear(elength*elength*elength, 128)
+
+        # Linear projection
+        self.linear = nn.Linear(elength * elength, 128)
+
         self.drop = nn.Dropout(0.25)
         self.softmax = nn.Softmax(dim=-1)
 
     def forward(self, inp, skip):
+        # Upsample
         out = self.transp_conv(inp)
+        # Concatenate skip connection
         out = torch.cat((out, skip), dim=1)
-        
+
+        # Spatial path
         spat_info = self.conv1(out)
         spat_info = self.conv2(spat_info)
         residual = spat_info
-    
+
+        # Channel path
         chan_info = self.conv3(out)
         chan_info = self.drop(chan_info)
 
-        B, C, D, H, W = chan_info.shape
-        chan_info = chan_info.reshape(B, C, D*H*W)
+        B, C, H, W = chan_info.shape
+        chan_info = chan_info.reshape(B, C, H * W)
         chan_info = self.linear(chan_info)
 
+        # Compute Q, K, V
         yq = self.convq(spat_info)
         yk = self.convk(chan_info)
         yv = self.convv(chan_info)
 
-        B1, C1, D1, H1, W1 = yq.shape
+        B1, C1, H1, W1 = yq.shape
         B2, C2, N2 = yk.shape
         B3, C3, N3 = yv.shape
 
-        yq = rearrange(yq, "B1 C1 D1 H1 W1 -> B1 D1 H1 W1 C1")
+        # Rearrange yq to (B1, H1*W1, C1)
+        yq = rearrange(yq, "B1 C1 H1 W1 -> B1 H1 W1 C1")
         yq = F.layer_norm(yq, [C1])
-        yq = yq.reshape(B1, D1*H1*W1, C1)
-        
-        yk = yk.reshape(B2, N2, C2)
+        yq = yq.reshape(B1, H1 * W1, C1)
+
+        # Layer norm K and V
+        yk = yk.permute(0, 2, 1)  # (B, N, C)
         yk = F.layer_norm(yk, [C2])
 
-        yv = yv.reshape(B3, N3, C3)
+        yv = yv.permute(0, 2, 1)
         yv = F.layer_norm(yv, [C3])
-        
+
+        # Attention
         seg_score = yq @ yk.transpose(-2, -1)
         seg_score = self.softmax(seg_score)
         feats = seg_score @ yv
-        feats = feats.reshape(B, C, D, H, W)
+
+        # Reshape back to (B, C, H, W)
+        feats = feats.transpose(1, 2).reshape(B, C, H, W)
+
+        # Output
         output = feats + residual
         return output
+
+
 
 class SwinUNETR(nn.Module):
     """
@@ -318,42 +398,42 @@ class SwinUNETR(nn.Module):
             norm_name=norm_name,
         )
 
-        self.bottleneck = SMA(
+        self.bottleneck = SMA2D(
             spatial_dims=spatial_dims,
             in_channels=feature_size * 16,
             out_channels=feature_size * 16,
             norm_name=norm_name,
         )
 
-        self.decoder5 = UnetrUpBlockChanged(
+        self.decoder5 = UnetrUpBlockChanged2D(
             spatial_dims=spatial_dims,
             in_channels=feature_size * 16,
             out_channels=feature_size * 8,
             norm_name=norm_name,
-            elength=8,
+            elength=8*2,
         )
 
-        self.decoder4 = UnetrUpBlockChanged(
+        self.decoder4 = UnetrUpBlockChanged2D(
             spatial_dims=spatial_dims,
             in_channels=feature_size * 8,
             out_channels=feature_size * 4,
             norm_name=norm_name,
-            elength=16,
+            elength=16*2,
         )
 
-        self.decoder3 = UnetrUpBlockChanged(
+        self.decoder3 = UnetrUpBlockChanged2D(
             spatial_dims=spatial_dims,
             in_channels=feature_size * 4,
             out_channels=feature_size * 2,
             norm_name=norm_name,
-            elength=32,
+            elength=32*2,
         )
-        self.decoder2 = UnetrUpBlockChanged(
+        self.decoder2 = UnetrUpBlockChanged2D(
             spatial_dims=spatial_dims,
             in_channels=feature_size * 2,
             out_channels=feature_size,
             norm_name=norm_name,
-            elength=64,
+            elength=64*2,
         )
 
         self.decoder1 = UnetrUpBlock(

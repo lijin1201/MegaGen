@@ -10,7 +10,7 @@
 # limitations under the License.
 
 import os
-import pdb
+# import pdb
 import shutil
 import time
 
@@ -27,6 +27,7 @@ from monai.data import decollate_batch
 
 def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
     model.train()
+    print_freq = len(loader) // 10
     start_time = time.time()
     run_loss = AverageMeter()
     for idx, batch_data in enumerate(loader):
@@ -55,12 +56,13 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
         else:
             run_loss.update(loss.item(), n=args.batch_size)
         #if args.rank == 0:
-        print(
-            "Epoch {}/{} {}/{}".format(epoch + 1, args.max_epochs, idx + 1, len(loader)),
-            "loss: {:.4f}".format(run_loss.avg),
-            "time {:.2f}s".format(time.time() - start_time),
-        )
-        start_time = time.time()
+        if idx % print_freq == 0 or idx == len(loader) - 1:
+            print(
+                "Epoch {}/{} {}/{}".format(epoch + 1, args.max_epochs, idx + 1, len(loader)),
+                "loss: {:.4f}".format(run_loss.avg),
+                "time {:.2f}s".format(time.time() - start_time),
+            )
+            start_time = time.time()
     for param in model.parameters():
         param.grad = None
     return run_loss.avg
@@ -68,6 +70,7 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
 
 def val_epoch(model, loader, epoch, acc_func, args, model_inferer=None, post_sigmoid=None, post_pred=None):
     model.eval()
+    print_freq = len(loader) // 10
     start_time = time.time()
     run_acc = AverageMeter()
 
@@ -94,20 +97,30 @@ def val_epoch(model, loader, epoch, acc_func, args, model_inferer=None, post_sig
                 run_acc.update(acc.cpu().numpy(), n=not_nans.cpu().numpy())
 
             #if args.rank == 0:
-            Dice_TC = run_acc.avg[0]
-            Dice_WT = run_acc.avg[1]
-            Dice_ET = run_acc.avg[2]
-            print(
-                "Val {}/{} {}/{}".format(epoch + 1, args.max_epochs, idx + 1, len(loader)),
-                ", Dice_TC:",
-                Dice_TC,
-                ", Dice_WT:",
-                Dice_WT,
-                ", Dice_ET:",
-                Dice_ET,
-                ", time {:.2f}s".format(time.time() - start_time),
-            )
-            start_time = time.time()
+            if idx % print_freq == 0 or idx == len(loader) - 1:
+                if args.out_channels == 3:
+                    Dice_TC = run_acc.avg[0]
+                    Dice_WT = run_acc.avg[1]
+                    Dice_ET = run_acc.avg[2]
+                    print(
+                        "Val {}/{} {}/{}".format(epoch + 1, args.max_epochs, idx + 1, len(loader)),
+                        ", Dice_TC:",
+                        Dice_TC,
+                        ", Dice_WT:",
+                        Dice_WT,
+                        ", Dice_ET:",
+                        Dice_ET,
+                        ", time {:.2f}s".format(time.time() - start_time),
+                    )
+                elif args.out_channels == 1:
+                    Dice_WT = run_acc.avg[0]
+                    print(
+                        "Val {}/{} {}/{}".format(epoch + 1, args.max_epochs, idx + 1, len(loader)),
+                        ", Dice:",
+                        Dice_WT,
+                        ", time {:.2f}s".format(time.time() - start_time),
+                    )
+                start_time = time.time()
 
     return run_acc.avg
 
@@ -119,7 +132,7 @@ def save_checkpoint(model, epoch, args, filename="model.pt", best_acc=0, optimiz
         save_dict["optimizer"] = optimizer.state_dict()
     if scheduler is not None:
         save_dict["scheduler"] = scheduler.state_dict()
-    filename = os.path.join("/data/zwlai/BRATS24/Fusion-noNiNres", filename)
+    filename = os.path.join(args.logdir, filename)
     torch.save(save_dict, filename)
     print("Saving checkpoint", filename)
 
@@ -184,20 +197,16 @@ def run_training(
             )
 
             #if args.rank == 0:
-            Dice_TC = val_acc[0]
-            Dice_WT = val_acc[1]
-            Dice_ET = val_acc[2]
+            if args.out_channels == 3:
+                dice_values = f'DIce_TC: {val_acc[0]:.4f}, Dice_WT: {val_acc[1]:.4f}, Dice_ET: {val_acc[2]:.4f}'
+            else:
+                dice_values = f'Dice: {val_acc[0]}'
             print(
-                "Final validation stats {}/{}".format(epoch + 1, args.max_epochs),
-                ", Dice_TC:",
-                Dice_TC,
-                ", Dice_WT:",
-                Dice_WT,
-                ", Dice_ET:",
-                Dice_ET,
-                ", time {:.2f}s".format(time.time() - epoch_time),
+                    "Final validation stats {}/{}".format(epoch + 1, args.max_epochs),
+                    ",", dice_values,
+                    ", time {:.2f}s".format(time.time() - epoch_time),
             )
-
+            
             if writer is not None:
                 writer.add_scalar("Mean_Val_Dice", np.mean(val_acc), epoch)
                 if semantic_classes is not None:
@@ -212,14 +221,14 @@ def run_training(
                 #if args.rank == 0 and args.logdir is not None and args.save_checkpoint:
                 if args.logdir is not None and args.save_checkpoint:
                     save_checkpoint(
-                        model, epoch, args, best_acc=val_acc_max, filename="model.pt", optimizer=optimizer, scheduler=scheduler
+                        model, epoch, args, best_acc=val_acc_max, filename=args.model+".pt", optimizer=optimizer, scheduler=scheduler
                     )
             #if args.rank == 0 and args.logdir is not None and args.save_checkpoint:
             if args.logdir is not None and args.save_checkpoint:
-                save_checkpoint(model, epoch, args, best_acc=val_acc_max, filename="model_final.pt")
+                save_checkpoint(model, epoch, args, best_acc=val_acc_max, filename=args.model+"_final.pt")
                 if b_new_best:
                     print("Copying to model.pt new best model!!!!")
-                    shutil.copyfile(os.path.join("/data/zwlai/BRATS24/Fusion-noNiNres", "model_final.pt"), os.path.join("/data/zwlai/BRATS24/Fusion-noNiNres", "model.pt"))
+                    shutil.copyfile(os.path.join(args.logdir, args.model+"_final.pt"), os.path.join(args.logdir, args.model+".pt"))
 
         if scheduler is not None:
             scheduler.step()

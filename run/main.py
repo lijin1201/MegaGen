@@ -19,13 +19,14 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.nn.parallel
 import torch.utils.data.distributed
-from optimizers.lr_scheduler import LinearWarmupCosineAnnealingLR
-from trainer import run_training
+from utils.lr_scheduler import LinearWarmupCosineAnnealingLR
+from .trainer import run_training
 from utils.data_utils import get_loader
-from swin_unetr import SwinUNETR
-from networks.UXNet_3D.network_backbone import UXNET
-from monai.networks.nets import UNETR
-from networks.MedNeXt.MedNextV1 import MedNeXt
+from model.lg2unetr import SwinUNETR
+from model.unet.unet_model import UNet
+# from networks.UXNet_3D.network_backbone import UXNET
+# from monai.networks.nets import UNETR
+# from networks.MedNeXt.MedNextV1 import MedNeXt
 
 from monai.inferers import sliding_window_inference
 from monai.losses import DiceLoss
@@ -37,6 +38,7 @@ from thop import profile
 from thop import clever_format
 
 parser = argparse.ArgumentParser(description="Swin UNETR segmentation pipeline for BRATS Challenge")
+parser.add_argument("--model", default="lg2unetr", type=str, help="model selection")
 parser.add_argument("--checkpoint", default=None, help="start training from saved checkpoint")
 parser.add_argument("--logdir", default="test", type=str, help="directory to save the tensorboard logs")
 parser.add_argument("--fold", default=0, type=int, help="data fold")
@@ -84,10 +86,10 @@ parser.add_argument("--infer_overlap", default=0.5, type=float, help="sliding wi
 parser.add_argument("--lrschedule", default="warmup_cosine", type=str, help="type of learning rate scheduler")
 parser.add_argument("--warmup_epochs", default=50, type=int, help="number of warmup epochs")
 parser.add_argument("--resume_ckpt", action="store_true", help="resume training from pretrained checkpoint")
-parser.add_argument("--smooth_dr", default=1e-6, type=float, help="constant added to dice denominator to avoid nan")
-parser.add_argument("--smooth_nr", default=0.0, type=float, help="constant added to dice numerator to avoid zero")
+parser.add_argument("--smooth_dr", default=1, type=float, help="constant added to dice denominator to avoid nan")
+parser.add_argument("--smooth_nr", default=1, type=float, help="constant added to dice numerator to avoid zero")
 parser.add_argument("--use_checkpoint", action="store_true", help="use gradient checkpointing to save memory")
-parser.add_argument("--spatial_dims", default=3, type=int, help="spatial dimension of input data")
+parser.add_argument("--spatial_dims", default=2, type=int, help="spatial dimension of input data")
 parser.add_argument(
     "--pretrained_dir",
     default="./pretrained_models/",
@@ -132,13 +134,19 @@ def main_worker(gpu, args):
     model_name = args.pretrained_model_name
     pretrained_pth = os.path.join(pretrained_dir, model_name)
 
-    model = SwinUNETR(
-        img_size=(args.roi_x, args.roi_y, args.roi_z),
-        in_channels=args.in_channels,
-        out_channels=args.out_channels,
-        feature_size=args.feature_size,
-        use_checkpoint=args.use_checkpoint,
-    )
+    if args.model == "unet0":
+        model = UNet(args.in_channels, args.out_channels)
+    elif args.model == "lg2unetr":
+        model = SwinUNETR(
+            img_size=(args.roi_x, args.roi_y, args.roi_z),
+            in_channels=args.in_channels,
+            out_channels=args.out_channels,
+            feature_size=args.feature_size,
+            use_checkpoint=args.use_checkpoint,
+        )
+    else:
+        raise ValueError("Unsupported Model: " + str(args.model))
+
     '''model = UXNET(
         in_chans=args.in_channels,
         out_chans=args.out_channels,
@@ -174,7 +182,9 @@ def main_worker(gpu, args):
         dim = '3d'
     )'''
     
-
+    # print(model)
+    from torchinfo import summary
+    summary(model, input_size=(args.batch_size, 3, 256, 256))
     if args.resume_ckpt:
         model_dict = torch.load(pretrained_pth)["state_dict"]
         model.load_state_dict(model_dict, False)
@@ -185,20 +195,27 @@ def main_worker(gpu, args):
             to_onehot_y=False, sigmoid=True, squared_pred=True, smooth_nr=args.smooth_nr, smooth_dr=args.smooth_dr
         )
     else:
-        dice_loss = DiceLoss(to_onehot_y=False, sigmoid=True)
+        dice_loss = DiceLoss(to_onehot_y=False, sigmoid=True, smooth_nr=args.smooth_nr, smooth_dr=args.smooth_dr)
     post_sigmoid = Activations(sigmoid=True)
     post_pred = AsDiscrete(argmax=False, logit_thresh=0.5)
     dice_acc = DiceMetric(include_background=True, reduction=MetricReduction.MEAN_BATCH, get_not_nans=True)
-    model_inferer = partial(
-        sliding_window_inference,
-        roi_size=inf_size,
-        sw_batch_size=args.sw_batch_size,
-        predictor=model,
-        overlap=args.infer_overlap,
-    )
+    if (args.spatial_dims == 3):
+        model_inferer = partial(
+            sliding_window_inference,
+            roi_size=inf_size,
+            sw_batch_size=args.sw_batch_size,
+            predictor=model,
+            overlap=args.infer_overlap,
+        )
+    else:
+        model_inferer = model
     pytorch_total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print("Total parameters count", pytorch_total_params)
-    ran = torch.randn(1, 4, 128, 128, 128)
+    if (args.spatial_dims == 3):
+        ran = torch.randn(1, 4, 128, 128, 128)
+    else:
+        ran = torch.randn(1, 3, 256, 256)
+    ran = ran.cuda(args.gpu)
     flops, params = profile(model, inputs=(ran,))
     print("Thop Results", flops, params)
     flops, params = clever_format([flops, params], "%.1f")

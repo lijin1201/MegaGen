@@ -1,0 +1,8 @@
+LG-UNETR
+.venv
+__pycache__
+*.pyc
+runs
+*.pth
+*.pt
+!unet-250627.pth
