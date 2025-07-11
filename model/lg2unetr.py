@@ -9,6 +9,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+#todo: change elength to W,H different version which should fit (160,192)
+
 from typing import Sequence, Tuple, Type, Union
 
 import numpy as np
@@ -165,7 +167,9 @@ class UnetrUpBlockChanged2D(nn.Module):
         spatial_dims: int,
         in_channels: int,
         out_channels: int,
-        elength: int,
+        # elength: int,
+        elength1: int,
+        elength2: int,
         norm_name: Union[Tuple, str],
         dropout: Union[Tuple, str, float] = None,
     ) -> None:
@@ -204,7 +208,7 @@ class UnetrUpBlockChanged2D(nn.Module):
         self.convv = nn.Conv1d(out_channels, out_channels, 1)
 
         # Linear projection
-        self.linear = nn.Linear(elength * elength, 128)
+        self.linear = nn.Linear(elength1 * elength2, 128)
 
         self.drop = nn.Dropout(0.25)
         self.softmax = nn.Softmax(dim=-1)
@@ -410,7 +414,9 @@ class SwinUNETR(nn.Module):
             in_channels=feature_size * 16,
             out_channels=feature_size * 8,
             norm_name=norm_name,
-            elength=8*2,
+            # elength=8*2,
+            elength1=img_size[0]//32*2, #160/32
+            elength2=img_size[1]//32*2,
         )
 
         self.decoder4 = UnetrUpBlockChanged2D(
@@ -418,7 +424,9 @@ class SwinUNETR(nn.Module):
             in_channels=feature_size * 8,
             out_channels=feature_size * 4,
             norm_name=norm_name,
-            elength=16*2,
+            # elength=16*2,
+            elength1=img_size[0]//32*2*2, #160/32
+            elength2=img_size[1]//32*2*2,            
         )
 
         self.decoder3 = UnetrUpBlockChanged2D(
@@ -426,14 +434,18 @@ class SwinUNETR(nn.Module):
             in_channels=feature_size * 4,
             out_channels=feature_size * 2,
             norm_name=norm_name,
-            elength=32*2,
+            # elength=32*2,
+            elength1=img_size[0]//32*4*2, #160/32
+            elength2=img_size[1]//32*4*2,
         )
         self.decoder2 = UnetrUpBlockChanged2D(
             spatial_dims=spatial_dims,
             in_channels=feature_size * 2,
             out_channels=feature_size,
             norm_name=norm_name,
-            elength=64*2,
+            # elength=64*2,
+            elength1=img_size[0]//32*8*2, #160/32
+            elength2=img_size[1]//32*8*2,
         )
 
         self.decoder1 = UnetrUpBlock(

@@ -17,7 +17,7 @@ import numpy as np
 import torch
 
 from monai import data, transforms
-from monai.data import PILReader
+from monai.data import PILReader, NumpyReader
 
 
 class Sampler(torch.utils.data.Sampler):
@@ -133,11 +133,22 @@ def get_loader(args):
             ]
         )
     elif (args.spatial_dims == 2):
+        transform_resize = \
+            transforms.Resized(keys=["image", "label"],
+                               spatial_size=(args.roi_x, args.roi_y), mode={"bilinear", "nearest"})
+        transform_norm_mask = \
+            transforms.LambdaD(keys="label", func=lambda x: ((x / 255.0) > 0.5).astype(np.int32)) \
+                    if args.out_base.endswith('lgg') \
+                    else transforms.Identity()
+        transform_reader = PILReader() \
+            if args.out_base.endswith('lgg') \
+            else NumpyReader()
         train_transform = transforms.Compose(
             [
-                transforms.LoadImaged(keys=["image", "label"], reader=PILReader()),
+                transforms.LoadImaged(keys=["image", "label"], reader=transform_reader),
                 transforms.EnsureChannelFirstd(keys=["image", "label"]),
-                transforms.LambdaD(keys="label", func=lambda x: ((x / 255.0) > 0.5).astype(np.int32)),
+                transform_resize,
+                transform_norm_mask,
                 transforms.RandAffined(
                     keys=["image", "label"],
                     rotate_range=(np.deg2rad(36),),
@@ -155,18 +166,20 @@ def get_loader(args):
         )
         val_transform = transforms.Compose(
             [
-                transforms.LoadImaged(keys=["image", "label"], reader=PILReader()),
+                transforms.LoadImaged(keys=["image", "label"], reader=transform_reader),
                 transforms.EnsureChannelFirstd(keys=["image", "label"]),
-                transforms.LambdaD(keys="label", func=lambda x: ((x / 255.0) > 0.5).astype(np.int32)),
+                transform_resize,
+                transform_norm_mask,
                 transforms.ToTensord(keys=["image", "label"]),
             ]
         )
 
         test_transform = transforms.Compose(
             [
-                transforms.LoadImaged(keys=["image", "label"], reader=PILReader()),
+                transforms.LoadImaged(keys=["image", "label"], reader=transform_reader),
                 transforms.EnsureChannelFirstd(keys=["image", "label"]),
-                transforms.LambdaD(keys="label", func=lambda x: ((x / 255.0) > 0.5).astype(np.int32)),
+                transform_resize,
+                transform_norm_mask,
                 transforms.ToTensord(keys=["image", "label"]),
             ]
         )
@@ -177,7 +190,7 @@ def get_loader(args):
         val_ds = data.Dataset(data=validation_files, transform=test_transform)
         val_sampler = Sampler(val_ds, shuffle=False) if args.distributed else None
         test_loader = data.DataLoader(
-            val_ds, batch_size=1, shuffle=False, num_workers=args.workers, sampler=val_sampler, pin_memory=True
+            val_ds, batch_size=args.nbatch_val, shuffle=False, num_workers=args.workers, sampler=val_sampler, pin_memory=True
         )
 
         loader = test_loader

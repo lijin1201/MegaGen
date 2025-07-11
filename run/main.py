@@ -31,6 +31,7 @@ from model.unet.unet_model import UNet
 from monai.inferers import sliding_window_inference
 from monai.losses import DiceLoss
 from monai.metrics import DiceMetric
+from monai.networks.nets import BasicUNet
 #from monai.networks.nets import SwinUNETR
 from monai.transforms import Activations, AsDiscrete, Compose
 from monai.utils.enums import MetricReduction
@@ -62,7 +63,7 @@ parser.add_argument("--dist-url", default="tcp://127.0.0.1:23456", type=str, hel
 parser.add_argument("--dist-backend", default="nccl", type=str, help="distributed backend")
 parser.add_argument("--norm_name", default="instance", type=str, help="normalization name")
 parser.add_argument("--workers", default=8, type=int, help="number of workers")
-parser.add_argument("--feature_size", default=60, type=int, help="feature size")
+parser.add_argument("--feature_size", default=24, type=int, help="feature size")
 parser.add_argument("--in_channels", default=4, type=int, help="number of input channels")
 parser.add_argument("--out_channels", default=3, type=int, help="number of output channels")
 parser.add_argument("--cache_dataset", action="store_true", help="use monai Dataset class")
@@ -73,9 +74,9 @@ parser.add_argument("--b_max", default=1.0, type=float, help="b_max in ScaleInte
 parser.add_argument("--space_x", default=1.5, type=float, help="spacing in x direction")
 parser.add_argument("--space_y", default=1.5, type=float, help="spacing in y direction")
 parser.add_argument("--space_z", default=2.0, type=float, help="spacing in z direction")
-parser.add_argument("--roi_x", default=128, type=int, help="roi size in x direction")
-parser.add_argument("--roi_y", default=128, type=int, help="roi size in y direction")
-parser.add_argument("--roi_z", default=128, type=int, help="roi size in z direction")
+parser.add_argument("--roi_x", default=256, type=int, help="roi size in x direction")
+parser.add_argument("--roi_y", default=256, type=int, help="roi size in y direction")
+parser.add_argument("--roi_z", default=1, type=int, help="roi size in z direction")
 parser.add_argument("--dropout_rate", default=0.0, type=float, help="dropout rate")
 parser.add_argument("--dropout_path_rate", default=0.0, type=float, help="drop path rate")
 parser.add_argument("--RandFlipd_prob", default=0.2, type=float, help="RandFlipd aug probability")
@@ -97,12 +98,13 @@ parser.add_argument(
     help="pretrained checkpoint directory",
 )
 parser.add_argument("--squared_dice", action="store_true", help="use squared Dice")
-
+parser.add_argument("--batch_dice", action="store_true", help="use batch option in diceloss calculation")
 
 def main():
     args = parser.parse_args()
+    print("Arguments:", args)
     args.amp = not args.noamp
-    args.logdir = "./runs/" + args.logdir
+    # args.logdir = "./runs/" + args.logdir
     if args.distributed:
         args.ngpus_per_node = torch.cuda.device_count()
         print("Found total gpus", args.ngpus_per_node)
@@ -125,6 +127,10 @@ def main_worker(gpu, args):
     torch.cuda.set_device(args.gpu)
     torch.backends.cudnn.benchmark = True
     args.test_mode = False
+    data_tag = args.json_list.split("/")[-1].split(".")[0] if args.json_list else "default"
+    data_tag = data_tag.replace("dataset_split_", "")
+    args.out_base = args.model + "-" + data_tag
+    
     loader = get_loader(args)
     print(args.rank, " gpu", args.gpu)
     if args.rank == 0:
@@ -136,13 +142,17 @@ def main_worker(gpu, args):
 
     if args.model == "unet0":
         model = UNet(args.in_channels, args.out_channels)
+    elif args.model == "unet1":
+        model = BasicUNet(spatial_dims=2, features=(64, 128, 256, 512, 1024, 64),
+                          in_channels=args.in_channels, out_channels=args.out_channels)
     elif args.model == "lg2unetr":
         model = SwinUNETR(
-            img_size=(args.roi_x, args.roi_y, args.roi_z),
+            img_size=(args.roi_x, args.roi_y),
             in_channels=args.in_channels,
             out_channels=args.out_channels,
             feature_size=args.feature_size,
             use_checkpoint=args.use_checkpoint,
+            spatial_dims=2
         )
     else:
         raise ValueError("Unsupported Model: " + str(args.model))
@@ -182,11 +192,16 @@ def main_worker(gpu, args):
         dim = '3d'
     )'''
     
+
     # print(model)
     from torchinfo import summary
-    summary(model, input_size=(args.batch_size, 3, 256, 256))
+    if data_tag.endswith('lgg'):
+        summary(model, input_size=(args.batch_size, 3, 256, 256))
+    else:
+        # summary(model, input_size=(args.batch_size, 1,160, 192))
+        summary(model, input_size=(args.batch_size, args.in_channels, args.roi_x , args.roi_y))
     if args.resume_ckpt:
-        model_dict = torch.load(pretrained_pth)["state_dict"]
+        model_dict = torch.load(pretrained_pth, weights_only=False)["state_dict"]
         model.load_state_dict(model_dict, False)
         print("Using pretrained weights")
 
@@ -195,10 +210,11 @@ def main_worker(gpu, args):
             to_onehot_y=False, sigmoid=True, squared_pred=True, smooth_nr=args.smooth_nr, smooth_dr=args.smooth_dr
         )
     else:
-        dice_loss = DiceLoss(to_onehot_y=False, sigmoid=True, smooth_nr=args.smooth_nr, smooth_dr=args.smooth_dr)
+        dice_loss = DiceLoss(to_onehot_y=False, sigmoid=True, smooth_nr=args.smooth_nr, smooth_dr=args.smooth_dr,
+                             batch=args.batch_dice)
     post_sigmoid = Activations(sigmoid=True)
-    post_pred = AsDiscrete(argmax=False, logit_thresh=0.5)
-    dice_acc = DiceMetric(include_background=True, reduction=MetricReduction.MEAN_BATCH, get_not_nans=True)
+    post_pred = AsDiscrete(argmax=False, threshold=0.5)
+    dice_acc = DiceMetric(include_background=True, reduction=MetricReduction.MEAN_BATCH, get_not_nans=True, ignore_empty=False)
     if (args.spatial_dims == 3):
         model_inferer = partial(
             sliding_window_inference,
@@ -211,15 +227,18 @@ def main_worker(gpu, args):
         model_inferer = model
     pytorch_total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print("Total parameters count", pytorch_total_params)
-    if (args.spatial_dims == 3):
-        ran = torch.randn(1, 4, 128, 128, 128)
-    else:
-        ran = torch.randn(1, 3, 256, 256)
-    ran = ran.cuda(args.gpu)
-    flops, params = profile(model, inputs=(ran,))
-    print("Thop Results", flops, params)
-    flops, params = clever_format([flops, params], "%.1f")
-    print("Thop Results", flops, params)
+    # if (args.spatial_dims == 3):
+    #     ran = torch.randn(1, 4, 128, 128, 128)
+    # else:
+    #     if data_tag.endswith('lgg'):
+    #         ran = torch.randn(1, 3, 256, 256)
+    #     else:
+    #         ran = torch.randn(1, 1, 160, 192)
+    # ran = ran.cuda(args.gpu)
+    # flops, params = profile(model, inputs=(ran,))
+    # print("Thop Results", flops, params)
+    # flops, params = clever_format([flops, params], "%.1f")
+    # print("Thop Results", flops, params)
 
     best_acc = 0
     start_epoch = 0

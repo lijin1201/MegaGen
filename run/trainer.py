@@ -56,7 +56,7 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
         else:
             run_loss.update(loss.item(), n=args.batch_size)
         #if args.rank == 0:
-        if idx % print_freq == 0 or idx == len(loader) - 1:
+        if (idx + 1) % print_freq == 0 or idx == len(loader) - 1:
             print(
                 "Epoch {}/{} {}/{}".format(epoch + 1, args.max_epochs, idx + 1, len(loader)),
                 "loss: {:.4f}".format(run_loss.avg),
@@ -68,11 +68,13 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
     return run_loss.avg
 
 
-def val_epoch(model, loader, epoch, acc_func, args, model_inferer=None, post_sigmoid=None, post_pred=None):
+def val_epoch(model, loader, epoch, acc_func, loss_func,
+              args, model_inferer=None, post_sigmoid=None, post_pred=None):
     model.eval()
     print_freq = len(loader) // 10
     start_time = time.time()
     run_acc = AverageMeter()
+    run_loss = AverageMeter()
 
     with torch.no_grad():
         for idx, batch_data in enumerate(loader):
@@ -85,6 +87,7 @@ def val_epoch(model, loader, epoch, acc_func, args, model_inferer=None, post_sig
             val_output_convert = [post_pred(post_sigmoid(val_pred_tensor)) for val_pred_tensor in val_outputs_list]
             acc_func.reset()
             acc_func(y_pred=val_output_convert, y=val_labels_list)
+            loss = loss_func(logits, target)
             acc, not_nans = acc_func.aggregate()
             acc = acc.cuda(args.rank)
             if args.distributed:
@@ -95,9 +98,10 @@ def val_epoch(model, loader, epoch, acc_func, args, model_inferer=None, post_sig
                     run_acc.update(al, n=nl)
             else:
                 run_acc.update(acc.cpu().numpy(), n=not_nans.cpu().numpy())
+                run_loss.update(loss.item(), n=args.batch_size)
 
             #if args.rank == 0:
-            if idx % print_freq == 0 or idx == len(loader) - 1:
+            if (idx +1) % print_freq == 0 or idx == len(loader) - 1:
                 if args.out_channels == 3:
                     Dice_TC = run_acc.avg[0]
                     Dice_WT = run_acc.avg[1]
@@ -117,7 +121,7 @@ def val_epoch(model, loader, epoch, acc_func, args, model_inferer=None, post_sig
                     print(
                         "Val {}/{} {}/{}".format(epoch + 1, args.max_epochs, idx + 1, len(loader)),
                         ", Dice:",
-                        Dice_WT,
+                        Dice_WT, f"Loss b{args.batch_size}:", run_loss.avg,
                         ", time {:.2f}s".format(time.time() - start_time),
                     )
                 start_time = time.time()
@@ -158,6 +162,7 @@ def run_training(
         writer = SummaryWriter(log_dir=args.logdir)
         #if args.rank == 0:
         print("Writing Tensorboard logs to ", args.logdir)
+    # train_loader.dataset[0]
     scaler = None
     if args.amp:
         scaler = GradScaler()
@@ -190,6 +195,7 @@ def run_training(
                 val_loader,
                 epoch=epoch,
                 acc_func=acc_func,
+                loss_func=loss_func,
                 model_inferer=model_inferer,
                 args=args,
                 post_sigmoid=post_sigmoid,
@@ -221,14 +227,14 @@ def run_training(
                 #if args.rank == 0 and args.logdir is not None and args.save_checkpoint:
                 if args.logdir is not None and args.save_checkpoint:
                     save_checkpoint(
-                        model, epoch, args, best_acc=val_acc_max, filename=args.model+".pt", optimizer=optimizer, scheduler=scheduler
+                        model, epoch, args, best_acc=val_acc_max, filename=args.out_base+".pt", optimizer=optimizer, scheduler=scheduler
                     )
             #if args.rank == 0 and args.logdir is not None and args.save_checkpoint:
             if args.logdir is not None and args.save_checkpoint:
-                save_checkpoint(model, epoch, args, best_acc=val_acc_max, filename=args.model+"_final.pt")
+                save_checkpoint(model, epoch, args, best_acc=val_acc_max, filename=args.out_base+"_final.pt")
                 if b_new_best:
                     print("Copying to model.pt new best model!!!!")
-                    shutil.copyfile(os.path.join(args.logdir, args.model+"_final.pt"), os.path.join(args.logdir, args.model+".pt"))
+                    shutil.copyfile(os.path.join(args.logdir, args.out_base+"_final.pt"), os.path.join(args.logdir, args.model+".pt"))
 
         if scheduler is not None:
             scheduler.step()

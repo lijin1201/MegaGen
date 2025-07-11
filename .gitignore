@@ -6,3 +6,4 @@ runs
 *.pth
 *.pt
 !unet-250627.pth
+*.onnx
