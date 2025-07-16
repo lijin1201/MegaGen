@@ -1,13 +1,4 @@
-# Copyright 2020 - 2022 MONAI Consortium
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#     http://www.apache.org/licenses/LICENSE-2.0
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Plot image and the predicted masks
 
 import argparse
 import os
@@ -17,14 +8,19 @@ from functools import partial
 import numpy as np
 import pandas as pd
 import torch
+import yaml
 from utils.data_utils import get_loader
+import glob
 
 from monai.inferers import sliding_window_inference
 from monai.losses import DiceLoss
-from monai.networks.nets import SwinUNETR
+from model.lg2unetr import SwinUNETR
+from monai.networks.nets import SwinUNETR as oSwinUNETR
 from monai.networks.nets import BasicUNet
 from model.unet.unet_model import UNet
 from monai.transforms import Activations, AsDiscrete
+from monai.metrics import DiceMetric
+from monai.utils.enums import MetricReduction
 
 import matplotlib.pyplot as plt
 
@@ -32,6 +28,7 @@ from thop import profile
 from thop import clever_format
 
 from utils.utils import AverageMeter
+from monai.data import decollate_batch
 
 parser = argparse.ArgumentParser(description="Swin UNETR segmentation pipeline")
 parser.add_argument("--model", default="lg2unetr", type=str, help="model selection")
@@ -42,7 +39,7 @@ parser.add_argument("--exp_name", default="post-val0", type=str, help="experimen
 parser.add_argument("--json_list", default="dataset_0.json", type=str, help="dataset json file")
 parser.add_argument("--fold", default=1, type=int, help="data fold")
 parser.add_argument("--pretrained_model_name", default="unet0-_final.pt", type=str, help="pretrained model name")
-parser.add_argument("--feature_size", default=48, type=int, help="feature size")
+parser.add_argument("--feature_size", default=24, type=int, help="feature size")
 parser.add_argument("--infer_overlap", default=0.6, type=float, help="sliding window inference overlap")
 parser.add_argument("--in_channels", default=1, type=int, help="number of input channels")
 parser.add_argument("--out_channels", default=1, type=int, help="number of output channels")
@@ -71,17 +68,40 @@ parser.add_argument(
     help="pretrained checkpoint directory",
 )
 parser.add_argument("--batch_dice", action="store_true", help="use batch option in diceloss calculation")
+parser.add_argument("--test_ids_dir", default="/workspaces/data/MegaGen/inputs/test-ids-brats2", type=str,
+                     help="directory containing test ids json files")
 
 
 def main():
     args = parser.parse_args()
     args.test_mode = True
+    
+    data_tag = args.json_list.split("/")[-1].split(".")[0] if args.json_list else "default"
+    data_tag = data_tag.replace("dataset_split_", "")
+    args.out_base = args.model + "-" + data_tag
+
     output_directory = os.path.join(args.pretrained_dir, args.exp_name)
     if not os.path.exists(output_directory):
         os.makedirs(output_directory)
     # args.test_mode = False
-    # test_loader = get_loader(args)[0]
-    test_loader = get_loader(args)
+
+    #if args.study == "marea"
+    #   test_loaders = group_loader(args)    
+    args_orig_json_list = args.json_list
+    test_ids_jsons = glob.glob(args.test_ids_dir+'/*.json')
+    valid_ids_jsons = glob.glob(args.test_ids_dir.replace('test-ids', 'valid-ids')+'/*.json')
+
+    test_loaders = []
+    valid_loaders = []
+    for test_ids_json in test_ids_jsons:
+        args.json_list = test_ids_json
+        test_loaders.append(get_loader(args))
+    for valid_ids_json in valid_ids_jsons:
+        args.json_list = valid_ids_json
+        valid_loaders.append(get_loader(args))
+    # test_loader = get_loader(args)
+    print(f"Test loaders created for {len(test_loaders)} datasets.")
+    print(f"Valid loaders created for {len(valid_loaders)} datasets.")
     pretrained_dir = args.pretrained_dir
     model_name = args.pretrained_model_name
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -92,27 +112,33 @@ def main():
     elif args.model == "unet1":
         model = BasicUNet(spatial_dims=2, features=(64, 128, 256, 512, 1024, 64),
                           in_channels=args.in_channels, out_channels=args.out_channels)
-    elif args.model == "lg2unetr":
-        model = SwinUNETR(
+    elif args.model == "swinunetr":
+        model = oSwinUNETR(
             in_channels=args.in_channels,
             out_channels=args.out_channels,
             feature_size=args.feature_size,
-            drop_rate=0.0,
-            attn_drop_rate=0.0,
-            dropout_path_rate=0.0,
             use_checkpoint=args.use_checkpoint,
+            spatial_dims=2)    
+    elif args.model == "lg2unetr":
+        model = SwinUNETR(
+            img_size=(args.roi_x, args.roi_y),
+            in_channels=args.in_channels,
+            out_channels=args.out_channels,
+            feature_size=args.feature_size,
+            use_checkpoint=args.use_checkpoint,
+            spatial_dims=2
         )
     else:
         raise ValueError("Unsupported Model: " + str(args.model))
-    
-    data_tag = args.json_list.split("/")[-1].split(".")[0] if args.json_list else "default"
-    data_tag = data_tag.replace("dataset_split_", "")
-    args.out_base = args.model + "-" + data_tag
     from torchinfo import summary
     if data_tag.endswith('lgg'):
         summary(model, input_size=(args.batch_size, 3, 256, 256))
     else:
         summary(model, input_size=(args.batch_size, 1,160, 192))
+    
+    model_dict = torch.load(pretrained_pth, weights_only=False)["state_dict"]
+    model.load_state_dict(model_dict) #, strict=False
+    
 
     if (args.spatial_dims == 3):
         ran = torch.randn(1, 4, 128, 128, 128)
@@ -124,8 +150,6 @@ def main():
     flops, params = clever_format([flops, params], "%.1f")
     print("Thop Results", flops, params)
     
-    model_dict = torch.load(pretrained_pth, weights_only=False)["state_dict"]
-    model.load_state_dict(model_dict) #, strict=False
     model.eval()
     model.to(device)
 
@@ -137,6 +161,8 @@ def main():
     #     overlap=args.infer_overlap,
     # )
 
+    model_inferer = model
+
     # loss_func = DiceLoss(to_onehot_y=False, sigmoid=True, smooth_nr=args.smooth_nr, smooth_dr=args.smooth_dr,
     #                          batch=args.batch_dice)
     # run_loss = AverageMeter()
@@ -146,68 +172,116 @@ def main():
     #         model, test_loader, optimizer, scaler=None, epoch=0, loss_func=loss_func, args=args
     #     )
     # model.train()
+    post_sigmoid = Activations(sigmoid=True)
+    post_pred = AsDiscrete(argmax=False, threshold=0.5)
+    acc_func = DiceMetric(include_background=True, reduction=MetricReduction.MEAN_BATCH, get_not_nans=True, ignore_empty=False)
+    
+    model.eval()
+    score_id_slice = []
+    score_id_flat = []
+    
+    def get_score(loaders):
+        with torch.no_grad():
+            val_aslice = []
+            target_aslice = []
+            for test_loader in loaders:
+                val_all = []
+                target_all = []
+                for idx, batch_data in enumerate(test_loader):
+                    data, target = batch_data["image"], batch_data["label"]
+                    data, target = data.cuda(0), target.cuda(0)
+                    logits = model_inferer(data)
+                    val_labels_list = decollate_batch(target)
+                    val_outputs_list = decollate_batch(logits)
+                    val_output_convert = [post_pred(post_sigmoid(val_pred_tensor)) for val_pred_tensor in val_outputs_list]
+                    val_all.extend(val_output_convert)
+                    target_all.extend(val_labels_list)
+                
+                val_aslice.extend(val_all)
+                target_aslice.extend(target_all)
+
+                print(f'val_all sizes: {len(val_all)}, {val_all[0].shape} ; {len(target_all)}, {target_all[0].shape}')
+                acc_func.reset()
+                acc_func(y_pred=val_all, y=target_all)
+                # acc_func(y_pred=post_pred(post_sigmoid(logits)), y=target)
+                acc, not_nans = acc_func.aggregate()
+                print(f"Mean Accuracy for one ID: {acc}, Not NaNs: {not_nans}")
+                score_id_slice.append(acc[0].item())
+
+                val_all_tensor = torch.stack(val_all, dim=0)
+                target_all_tensor = torch.stack(target_all, dim=0)
+                # preds_flat = val_all_tensor.reshape(1, -1, *val_all_tensor.shape[2:])  # Now shape: [1, B*C, H, W]
+                # labels_flat = target_all_tensor.reshape(1, -1, *target_all_tensor.shape[2:])
+                dice_fn = DiceLoss(to_onehot_y=False,
+                        include_background=True, batch=True,
+                        reduction="none"  # Important: prevents averaging
+                    )
+                
+                acc = 1 - dice_fn(val_all_tensor, target_all_tensor)
+                print(f"Flat Accuracy for one ID: {acc}")
+                score_id_flat.append(acc.squeeze(-1).item())
+            
+            acc_func.reset()
+            acc_func(y_pred=val_aslice, y=target_aslice)
+            # acc_func(y_pred=post_pred(post_sigmoid(logits)), y=target)
+            acc_aslice, not_nans = acc_func.aggregate()
+            print(f"Accuracy for all slices: {acc_aslice}, Not NaNs: {not_nans}")
+
+        scoredic = {'score_id_slice': float(np.mean(score_id_slice)),
+                    'score_id_flat': float(np.mean(score_id_flat)),
+                    'score_aslice':  float(acc_aslice[0].item()) }
+        print (scoredic)
+        return scoredic
+
+    output_file = os.path.join(output_directory, f"{args.out_base}-scores.yaml")
+    # Open the file in write mode and dump the data
+    with open(output_file, 'w') as file:
+        yaml.dump({'test': get_score(test_loaders),
+                   'valid': get_score(valid_loaders)},
+                    file, default_flow_style=False, sort_keys=False)
+
+    #normal plotting
+    args.json_list = args_orig_json_list
+    test_loader = get_loader(args)
+    # test_loader = test_loaders  # Get the first test loader from the list
     # Recovers the original `dataset` from the `dataloader`
     dataset = test_loader.dataset
 
-    #print(dataset[])
+    print(dataset[0])
 
-    post_sigmoid = Activations(sigmoid=True)
-    post_pred = AsDiscrete(argmax=False, threshold=0.5)
-    
     # Get a random sample
     import random
     random.seed(42)
     random_index = random.sample(range(0,len(dataset)),10)
     examples = dataset[random_index]
 
-    model.eval()
-    with torch.no_grad():
-        for data in examples:
-            image, target = data["image"], data["label"]
-            image = image.cuda(0)
-            logits = model(image.unsqueeze(0))
-            img_pre = post_pred(post_sigmoid(logits))
-            img_pre = np.squeeze(img_pre)
+    # with torch.no_grad():
+    #     for data in examples:
+    #         image, target = data["image"], data["label"]
+    #         image = image.cuda(0)
+    #         logits = model(image.unsqueeze(0))
+    #         img_pre = post_pred(post_sigmoid(logits))
+    #         img_pre = np.squeeze(img_pre)
 
-            plt.figure(figsize=(12, 12))
-            plt.subplot(1, 3, 1)
-            img_np = image.cpu().numpy()
-            img_np = np.squeeze(img_np)
-            plt.imshow(img_np, cmap="gray")
+    #         plt.figure(figsize=(12, 12))
+    #         plt.subplot(1, 3, 1)
+    #         img_np = image.cpu().numpy()
+    #         img_np = np.squeeze(img_np)
+    #         plt.imshow(img_np, cmap="gray")
 
-            plt.subplot(1, 3, 2)
-            plt.imshow(img_np, cmap="gray")
-            plt.imshow(target.squeeze(), cmap="jet", alpha = 0.4 )
+    #         plt.subplot(1, 3, 2)
+    #         plt.imshow(img_np, cmap="gray")
+    #         plt.imshow(target.squeeze(), cmap="jet", alpha = 0.4 )
 
-            plt.subplot(1, 3, 3)
-            plt.imshow(img_np, cmap="gray")
-            plt.imshow(img_pre, cmap="jet", alpha = 0.4 )
+    #         plt.subplot(1, 3, 3)
+    #         plt.imshow(img_np, cmap="gray")
+    #         plt.imshow(img_pre, cmap="jet", alpha = 0.4 )
 
 
-            plt.savefig(os.path.join(output_directory, f"{args.out_base}-{args.out_base}.png"))
-            # print(data['image'].shape, data['label'].shape)
-            # print (pd.Series(data['image'].numpy().flatten()).describe())
-            # print (pd.Series(data['label'].numpy().flatten()).describe())
-            
-        # for idx, batch_data in enumerate(test_loader):
-        #     if isinstance(batch_data, list):
-        #         image, target = batch_data
-        #     else:
-        #         image, target = batch_data["image"], batch_data["label"]
-        #     image, target = image.cuda(0), target.cuda(0)
-        #     if args.spatial_dims == 3:
-        #         # prob = torch.sigmoid(model_inferer_test(image))
-        #         logits = model_inferer_test(image)
-        #     else:
-        #         # prob = torch.sigmoid(model(image))
-        #         logits = model(image)
-            
-        #     loss = loss_func(logits, target)
-
-        #     run_loss.update(loss.item(), n=args.batch_size)
-
-        #     if (idx +1) % print_freq == 0 or idx == len(test_loader) - 1:
-        #         print(f"Loss b{args.batch_size}:", run_loss.avg)
+    #         plt.savefig(os.path.join(output_directory, f"{args.out_base}-{args.out_base}.png"))
+    #         # print(data['image'].shape, data['label'].shape)
+    #         # print (pd.Series(data['image'].numpy().flatten()).describe())
+    #         # print (pd.Series(data['label'].numpy().flatten()).describe())
 
         print("Finished inference!")
 

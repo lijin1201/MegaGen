@@ -24,6 +24,7 @@ from .trainer import run_training
 from utils.data_utils import get_loader
 from model.lg2unetr import SwinUNETR
 from model.unet.unet_model import UNet
+from monai.networks.nets import SwinUNETR as oSwinUNETR
 # from networks.UXNet_3D.network_backbone import UXNET
 # from monai.networks.nets import UNETR
 # from networks.MedNeXt.MedNextV1 import MedNeXt
@@ -145,6 +146,13 @@ def main_worker(gpu, args):
     elif args.model == "unet1":
         model = BasicUNet(spatial_dims=2, features=(64, 128, 256, 512, 1024, 64),
                           in_channels=args.in_channels, out_channels=args.out_channels)
+    elif args.model == "swinunetr":
+        model = oSwinUNETR(
+            in_channels=args.in_channels,
+            out_channels=args.out_channels,
+            feature_size=args.feature_size,
+            use_checkpoint=args.use_checkpoint,
+            spatial_dims=2)
     elif args.model == "lg2unetr":
         model = SwinUNETR(
             img_size=(args.roi_x, args.roi_y),
@@ -289,6 +297,7 @@ def main_worker(gpu, args):
 
     semantic_classes = ["Dice_Val_TC", "Dice_Val_WT", "Dice_Val_ET"]
 
+    print (loader[0].dataset.transform.transforms)
     accuracy = run_training(
         model=model,
         train_loader=loader[0],

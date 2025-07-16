@@ -155,10 +155,13 @@ def get_loader(args):
                     translate_range=(0.05, 0.05),
                     scale_range=(0.05, 0.05),
                     shear_range=(np.deg2rad(3), np.deg2rad(3)),
-                    prob=1.0
+                    prob=1.0,
+                    mode=["bilinear", "nearest"],
+                    padding_mode='border'
                 ),
                 transforms.RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=0),
                 transforms.RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=1),
+                transforms.CastToTyped(keys="label", dtype=np.uint8),
                 # transforms.RandScaleIntensityd(keys="image", factors=0.1, prob=1.0),
                 # transforms.RandShiftIntensityd(keys="image", offsets=0.1, prob=1.0),
                 transforms.ToTensord(keys=["image", "label"]),
@@ -170,6 +173,7 @@ def get_loader(args):
                 transforms.EnsureChannelFirstd(keys=["image", "label"]),
                 # transform_resize,
                 transform_norm_mask,
+                transforms.CastToTyped(keys="label", dtype=np.uint8),
                 transforms.ToTensord(keys=["image", "label"]),
             ]
         )
@@ -180,6 +184,7 @@ def get_loader(args):
                 transforms.EnsureChannelFirstd(keys=["image", "label"]),
                 # transform_resize,
                 transform_norm_mask,
+                transforms.CastToTyped(keys="label", dtype=np.uint8),
                 transforms.ToTensord(keys=["image", "label"]),
             ]
         )
