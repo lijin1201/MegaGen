@@ -24,6 +24,7 @@ from .trainer import run_training
 from utils.data_utils import get_loader
 from model.lg2unetr import SwinUNETR
 from model.unet.unet_model import UNet
+from model.mednextv1.MedNextV1 import MedNeXt
 from monai.networks.nets import SwinUNETR as oSwinUNETR
 # from networks.UXNet_3D.network_backbone import UXNET
 # from monai.networks.nets import UNETR
@@ -32,7 +33,7 @@ from monai.networks.nets import SwinUNETR as oSwinUNETR
 from monai.inferers import sliding_window_inference
 from monai.losses import DiceLoss
 from monai.metrics import DiceMetric
-from monai.networks.nets import BasicUNet
+from monai.networks.nets import BasicUNet, BasicUNetPlusPlus
 #from monai.networks.nets import SwinUNETR
 from monai.transforms import Activations, AsDiscrete, Compose
 from monai.utils.enums import MetricReduction
@@ -146,6 +147,9 @@ def main_worker(gpu, args):
     elif args.model == "unet1":
         model = BasicUNet(spatial_dims=2, features=(64, 128, 256, 512, 1024, 64),
                           in_channels=args.in_channels, out_channels=args.out_channels)
+    elif args.model == "unet1s":
+        model = BasicUNet(spatial_dims=2, features=(32, 64, 128, 256, 512, 32),
+                          in_channels=args.in_channels, out_channels=args.out_channels)
     elif args.model == "swinunetr":
         model = oSwinUNETR(
             in_channels=args.in_channels,
@@ -162,6 +166,32 @@ def main_worker(gpu, args):
             use_checkpoint=args.use_checkpoint,
             spatial_dims=2
         )
+    elif args.model == "unetpp0":
+        model = BasicUNetPlusPlus(
+            spatial_dims=2, features=(32, 64, 128, 256, 512, 32),
+            in_channels=args.in_channels,
+            out_channels=args.out_channels,
+        )
+    elif args.model == "unetpp0D":
+        model = BasicUNetPlusPlus(
+            spatial_dims=2, features=(32, 64, 128, 256, 512, 32),
+            in_channels=args.in_channels,
+            out_channels=args.out_channels,
+            deep_supervision=True
+        )
+    # elif args.model == "mednext0":
+        # model = MedNeXt(
+        #     in_channels = args.in_channels, 
+        #     n_channels = 32,
+        #     n_classes = args.out_channels, 
+        #     exp_r=2,                         
+        #     kernel_size=kernel_size,         
+        #     deep_supervision=ds,             
+        #     do_res=True,                     
+        #     do_res_up_down = True,
+        #     block_counts = [2,2,2,2,2,2,2,2,2],
+        #     dim='2d'
+        # )
     else:
         raise ValueError("Unsupported Model: " + str(args.model))
 

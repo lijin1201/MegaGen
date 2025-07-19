@@ -107,7 +107,7 @@ if __name__ == '__main__':
     test_df['maskQ'] = pd.cut(test_df['maskA'], bins=msizeQ3, labels=labels)
     test_dfQs = [group_df for _, group_df in test_df.groupby('maskQ')]
     create_json_folds(test_dfQs,
-                         "/workspaces/data/MegaGen/inputs/dataset_split_testQ3_brats2.json",
+                         "/workspaces/data/MegaGen/inputs/dataset_split_test_maskA3_brats2.json",
                          key='testing')
 
     #stop and exit

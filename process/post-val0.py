@@ -16,7 +16,7 @@ from monai.inferers import sliding_window_inference
 from monai.losses import DiceLoss
 from model.lg2unetr import SwinUNETR
 from monai.networks.nets import SwinUNETR as oSwinUNETR
-from monai.networks.nets import BasicUNet
+from monai.networks.nets import BasicUNet, BasicUNetPlusPlus
 from model.unet.unet_model import UNet
 from monai.transforms import Activations, AsDiscrete
 from monai.metrics import DiceMetric
@@ -70,6 +70,7 @@ parser.add_argument(
 parser.add_argument("--batch_dice", action="store_true", help="use batch option in diceloss calculation")
 parser.add_argument("--test_ids_dir", default="/workspaces/data/MegaGen/inputs/test-ids-brats2", type=str,
                      help="directory containing test ids json files")
+parser.add_argument("--study", default="test_ids", help="calculate patiend-id sise, or group wise")
 
 
 def main():
@@ -85,23 +86,7 @@ def main():
         os.makedirs(output_directory)
     # args.test_mode = False
 
-    #if args.study == "marea"
-    #   test_loaders = group_loader(args)    
-    args_orig_json_list = args.json_list
-    test_ids_jsons = glob.glob(args.test_ids_dir+'/*.json')
-    valid_ids_jsons = glob.glob(args.test_ids_dir.replace('test-ids', 'valid-ids')+'/*.json')
 
-    test_loaders = []
-    valid_loaders = []
-    for test_ids_json in test_ids_jsons:
-        args.json_list = test_ids_json
-        test_loaders.append(get_loader(args))
-    for valid_ids_json in valid_ids_jsons:
-        args.json_list = valid_ids_json
-        valid_loaders.append(get_loader(args))
-    # test_loader = get_loader(args)
-    print(f"Test loaders created for {len(test_loaders)} datasets.")
-    print(f"Valid loaders created for {len(valid_loaders)} datasets.")
     pretrained_dir = args.pretrained_dir
     model_name = args.pretrained_model_name
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -111,6 +96,9 @@ def main():
         model = UNet(args.in_channels, args.out_channels)
     elif args.model == "unet1":
         model = BasicUNet(spatial_dims=2, features=(64, 128, 256, 512, 1024, 64),
+                          in_channels=args.in_channels, out_channels=args.out_channels)
+    elif args.model == "unet1s":
+        model = BasicUNet(spatial_dims=2, features=(32, 64, 128, 256, 512, 32),
                           in_channels=args.in_channels, out_channels=args.out_channels)
     elif args.model == "swinunetr":
         model = oSwinUNETR(
@@ -127,6 +115,19 @@ def main():
             feature_size=args.feature_size,
             use_checkpoint=args.use_checkpoint,
             spatial_dims=2
+        )
+    elif args.model == "unetpp0":
+        model = BasicUNetPlusPlus(
+            spatial_dims=2, features=(32, 64, 128, 256, 512, 32),
+            in_channels=args.in_channels,
+            out_channels=args.out_channels,
+        )
+    elif args.model == "unetpp0D":
+        model = BasicUNetPlusPlus(
+            spatial_dims=2, features=(32, 64, 128, 256, 512, 32),
+            in_channels=args.in_channels,
+            out_channels=args.out_channels,
+            deep_supervision=True
         )
     else:
         raise ValueError("Unsupported Model: " + str(args.model))
@@ -192,7 +193,7 @@ def main():
                     data, target = data.cuda(0), target.cuda(0)
                     logits = model_inferer(data)
                     val_labels_list = decollate_batch(target)
-                    val_outputs_list = decollate_batch(logits)
+                    val_outputs_list = decollate_batch(logits if not isinstance(logits, list) else logits[-1])
                     val_output_convert = [post_pred(post_sigmoid(val_pred_tensor)) for val_pred_tensor in val_outputs_list]
                     val_all.extend(val_output_convert)
                     target_all.extend(val_labels_list)
@@ -227,33 +228,68 @@ def main():
             acc_aslice, not_nans = acc_func.aggregate()
             print(f"Accuracy for all slices: {acc_aslice}, Not NaNs: {not_nans}")
 
-        scoredic = {'score_id_slice': float(np.mean(score_id_slice)),
+        scoredic = {'score_id_slice': float(np.mean(score_id_slice)), #mean of id's mean  slice score
                     'score_id_flat': float(np.mean(score_id_flat)),
                     'score_aslice':  float(acc_aslice[0].item()) }
         print (scoredic)
         return scoredic
 
+
+    gscores = []
+    if args.study.startswith("group"):
+        args.test_mode = False  #in order for fold to work
+        nGroups = int(args.study.split("_")[-1])
+        for i in range(0, nGroups):
+            args.fold = i
+            group_loaderi = get_loader(args, key='testing')
+            gscore_i = get_score([group_loaderi[1]])
+            gscores.append(gscore_i)
+
+    args.test_mode = True #just one test dataset, but fold is still needed to get the "val" data
+    args.fold = 0 # revert to the original fold
+    # args_orig_json_list = args.json_list
+    test_ids_jsons = glob.glob(args.test_ids_dir+'/*.json')
+    valid_ids_jsons = glob.glob(args.test_ids_dir.replace('test-ids', 'valid-ids')+'/*.json')
+
+    test_loaders = []
+    valid_loaders = []
+    for test_ids_json in test_ids_jsons:
+        args.json_list = test_ids_json
+        test_loaders.append(get_loader(args))
+    for valid_ids_json in valid_ids_jsons:
+        args.json_list = valid_ids_json
+        valid_loaders.append(get_loader(args))
+    # test_loader = get_loader(args)
+    print(f"Test loaders created for {len(test_loaders)} datasets.")
+    print(f"Valid loaders created for {len(valid_loaders)} datasets.")
+
+
     output_file = os.path.join(output_directory, f"{args.out_base}-scores.yaml")
     # Open the file in write mode and dump the data
     with open(output_file, 'w') as file:
         yaml.dump({'test': get_score(test_loaders),
-                   'valid': get_score(valid_loaders)},
+                   'valid': get_score(valid_loaders),
+                   'groups': gscores},
                     file, default_flow_style=False, sort_keys=False)
 
-    #normal plotting
-    args.json_list = args_orig_json_list
-    test_loader = get_loader(args)
-    # test_loader = test_loaders  # Get the first test loader from the list
-    # Recovers the original `dataset` from the `dataloader`
-    dataset = test_loader.dataset
 
-    print(dataset[0])
 
-    # Get a random sample
-    import random
-    random.seed(42)
-    random_index = random.sample(range(0,len(dataset)),10)
-    examples = dataset[random_index]
+
+
+#    #normal plotting
+    # args.json_list = args_orig_json_list
+    # test_loader = get_loader(args)
+    # # test_loader = test_loaders  # Get the first test loader from the list
+    # # Recovers the original `dataset` from the `dataloader`
+    # dataset = test_loader.dataset
+
+    # print(dataset[0])
+
+    # # Get a random sample
+    # import random
+    # random.seed(42)
+    # random_index = random.sample(range(0,len(dataset)),10)
+    # examples = dataset[random_index]
 
     # with torch.no_grad():
     #     for data in examples:
@@ -283,7 +319,7 @@ def main():
     #         # print (pd.Series(data['image'].numpy().flatten()).describe())
     #         # print (pd.Series(data['label'].numpy().flatten()).describe())
 
-        print("Finished inference!")
+    print("Finished inference!")
 
 
 if __name__ == "__main__":

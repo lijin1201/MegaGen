@@ -5,7 +5,7 @@
 #     http://www.apache.org/licenses/LICENSE-2.0
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND  , either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
@@ -42,7 +42,27 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, acc_func, ar
             param.grad = None
         with autocast(enabled=args.amp):
             logits = model(data)
-            loss = loss_func(logits, target)
+            if not isinstance(logits, list):
+                loss = loss_func(logits, target)
+            elif len(logits) ==1 :
+                loss = loss_func(logits[0], target)
+            elif len(logits) == 4:
+                deep_supervision_weights = [0.1, 0.2, 0.3, 0.4]
+                loss = 0
+                for out, w in zip(logits, deep_supervision_weights):
+                    lossi = loss_func(out, target)
+                    loss += w * lossi
+            elif len(logits) == 5:
+                deep_supervision_weights = [0.05, 0.1, 0.15, 0.2, 0.5]
+                loss = 0
+                for out, w in zip(logits, deep_supervision_weights):
+                    resized_target = torch.nn.functional.interpolate(
+                        target, size=out.shape[2:], mode="nearest")
+                    lossi = loss_func(out, resized_target)
+                    loss += w * lossi
+            else:
+                raise ValueError("Unsupported logits length: " + str(len(logits)))
+
         if args.amp:
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -60,7 +80,7 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, acc_func, ar
             
         #if args.rank == 0:
         val_labels_list = decollate_batch(target)
-        val_outputs_list = decollate_batch(logits)
+        val_outputs_list = decollate_batch(logits if not isinstance(logits, list) else logits[-1])
         val_output_convert = [post_pred(post_sigmoid(val_pred_tensor)) for val_pred_tensor in val_outputs_list]
         # val_output_convert = [post_pred(post_sigmoid(val_pred_tensor)) for val_pred_tensor in logits]
         acc_func.reset()
@@ -96,11 +116,11 @@ def val_epoch(model, loader, epoch, acc_func, loss_func,
             with autocast(enabled=args.amp):
                 logits = model_inferer(data)
             val_labels_list = decollate_batch(target)
-            val_outputs_list = decollate_batch(logits)
+            val_outputs_list = decollate_batch(logits if not isinstance(logits, list) else logits[-1])
             val_output_convert = [post_pred(post_sigmoid(val_pred_tensor)) for val_pred_tensor in val_outputs_list]
             acc_func.reset()
             acc_func(y_pred=val_output_convert, y=val_labels_list)
-            loss = loss_func(logits, target)
+            loss = loss_func(logits if not isinstance(logits, list) else logits[-1], target)
             acc, not_nans = acc_func.aggregate()
             acc = acc.cuda(args.rank)
             if args.distributed:
@@ -136,6 +156,7 @@ def val_epoch(model, loader, epoch, acc_func, loss_func,
                         "Val {}/{} {}/{}".format(epoch + 1, args.max_epochs, idx + 1, len(loader)),
                         ", Dice:",
                         Dice_WT, f"Loss b{args.batch_size}:", run_loss.avg,
+                        f", Logits: {0 if not isinstance(logits,list) else len(logits)}"
                         ", time {:.2f}s".format(time.time() - start_time),
                     )
                 start_time = time.time()
