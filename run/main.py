@@ -26,6 +26,7 @@ from model.lg2unetr import SwinUNETR
 from model.unet.unet_model import UNet
 from model.mednextv1.MedNextV1 import MedNeXt
 from monai.networks.nets import SwinUNETR as oSwinUNETR
+from model.MedNeXt2D.mednext2d import MedNeXt2D
 # from networks.UXNet_3D.network_backbone import UXNET
 # from monai.networks.nets import UNETR
 # from networks.MedNeXt.MedNextV1 import MedNeXt
@@ -151,6 +152,7 @@ def main_worker(gpu, args):
         model = BasicUNet(spatial_dims=2, features=(32, 64, 128, 256, 512, 32),
                           in_channels=args.in_channels, out_channels=args.out_channels)
     elif args.model == "swinunetr":
+
         model = oSwinUNETR(
             in_channels=args.in_channels,
             out_channels=args.out_channels,
@@ -179,6 +181,43 @@ def main_worker(gpu, args):
             out_channels=args.out_channels,
             deep_supervision=True
         )
+    elif args.model == "mednext0" or args.model == "mednext0DU":
+        model = MedNeXt2D(
+            in_channels = args.in_channels, 
+            out_channels = args.out_channels,
+            C = 32,
+            encoder_blocks=[2, 2, 2, 2], 
+            encoder_expansion=[4, 4, 4, 4], 
+            deep_supervision=True
+        )
+    elif args.model == "mednext0P":
+        model = MedNeXt2D(
+            in_channels = args.in_channels, 
+            out_channels = args.out_channels,
+            C = 32,
+            encoder_blocks=[2, 2, 2, 2], 
+            encoder_expansion=[4, 4, 4, 4], 
+            deep_supervision=False
+        )
+    elif args.model == "mednext0l1":
+        model = MedNeXt2D(
+            in_channels = args.in_channels, 
+            out_channels = args.out_channels,
+            C = 32,
+            encoder_blocks=[2, 2, 2, 2], 
+            encoder_expansion=[2, 3, 4, 4], 
+            deep_supervision=True
+        )
+    elif args.model == "mednext0l1P":
+        model = MedNeXt2D(
+            in_channels = args.in_channels, 
+            out_channels = args.out_channels,
+            C = 32,
+            encoder_blocks=[2, 2, 2, 2], 
+            encoder_expansion=[2, 3, 4, 4], 
+            deep_supervision=False
+        )
+    
     # elif args.model == "mednext0":
         # model = MedNeXt(
         #     in_channels = args.in_channels, 

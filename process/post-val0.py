@@ -139,7 +139,9 @@ def main():
     
     model_dict = torch.load(pretrained_pth, weights_only=False)["state_dict"]
     model.load_state_dict(model_dict) #, strict=False
-    
+    model.eval()
+    model.to(device)
+
 
     if (args.spatial_dims == 3):
         ran = torch.randn(1, 4, 128, 128, 128)
@@ -151,17 +153,7 @@ def main():
     flops, params = clever_format([flops, params], "%.1f")
     print("Thop Results", flops, params)
     
-    model.eval()
-    model.to(device)
-
-    # model_inferer_test = partial(
-    #     sliding_window_inference,
-    #     roi_size=[args.roi_x, args.roi_y, args.roi_z],
-    #     sw_batch_size=1,
-    #     predictor=model,
-    #     overlap=args.infer_overlap,
-    # )
-
+  
     model_inferer = model
 
     # loss_func = DiceLoss(to_onehot_y=False, sigmoid=True, smooth_nr=args.smooth_nr, smooth_dr=args.smooth_dr,
@@ -178,6 +170,30 @@ def main():
     acc_func = DiceMetric(include_background=True, reduction=MetricReduction.MEAN_BATCH, get_not_nans=True, ignore_empty=False)
     
     model.eval()
+
+    def save_pred(loader): #only for loaders which is not list
+       with torch.no_grad():
+           for dataDict in loader.dataset.data:
+                dataF = dataDict["image"] #folder
+                dataM = dataDict['label'] #mask
+                data = torch.from_numpy(np.load(dataF)).unsqueeze(0).unsqueeze(0).cuda(0)
+                logits = model_inferer(data)
+                logits = logits if not isinstance(logits, list) else logits[-1]
+                val_output_convert = post_pred(post_sigmoid(logits))
+                args.pred_root = os.path.join(os.path.split(args.data_dir)[0],'pred')\
+                    + '/' + args.model 
+                output_path =os.path.split(dataM)[0].replace(args.data_dir, args.pred_root)
+                output_path = os.path.split(output_path)[0] + '/' + os.path.split(output_path)[1].replace('npy', 'pt')
+                output_path = os.path.join(output_path,os.path.split(dataM)[1].replace('npy', 'pt'))
+                torch.save(val_output_convert, output_path)
+
+    # args.json_list = args_orig_json_list
+    args.test_mode = False
+    loaders = get_loader(args)
+    save_pred(loaders[0])
+    save_pred(loaders[1])
+
+
     score_id_slice = []
     score_id_flat = []
     
@@ -195,6 +211,9 @@ def main():
                     val_labels_list = decollate_batch(target)
                     val_outputs_list = decollate_batch(logits if not isinstance(logits, list) else logits[-1])
                     val_output_convert = [post_pred(post_sigmoid(val_pred_tensor)) for val_pred_tensor in val_outputs_list]
+                    #save outputs
+                    # out_file = 
+                    # torch.save(val_output_convert, f"outputs/{idx}.pt")
                     val_all.extend(val_output_convert)
                     target_all.extend(val_labels_list)
                 
@@ -265,13 +284,12 @@ def main():
 
 
     output_file = os.path.join(output_directory, f"{args.out_base}-scores.yaml")
-    # Open the file in write mode and dump the data
-    with open(output_file, 'w') as file:
-        yaml.dump({'test': get_score(test_loaders),
-                   'valid': get_score(valid_loaders),
-                   'groups': gscores},
-                    file, default_flow_style=False, sort_keys=False)
-
+    # Open the file in write mode and dump the data; good code
+    # with open(output_file, 'w') as file:
+    #     yaml.dump({'test': get_score(test_loaders),
+    #                'valid': get_score(valid_loaders),
+    #                'groups': gscores},
+    #                 file, default_flow_style=False, sort_keys=False)
 
 
 

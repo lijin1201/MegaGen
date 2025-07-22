@@ -86,6 +86,77 @@ def create_json_folds(dflist, output_json_path, key):
 
     print(f"JSON file saved to {output_json_path}")
 
+def create_json_from_dfs_by_id(df_inp, out_parent ='out-ids-brats2'):
+    dfs_ids = {id_key: group for id_key, group in df_inp.groupby('id')}
+    for id, df in dfs_ids.items():
+            print(f"Processing ID: {id}")
+            df = df.reset_index(drop=True)
+            output_json_path = f"/workspaces/data/MegaGen/inputs/{out_parent}/dataset_split_{id}_brats.json"
+            if not os.path.exists(os.path.split(output_json_path)[0]):
+                os.makedirs(os.path.split(output_json_path)[0])
+            create_json_from_dfs(df, df, output_json_path)
+
+def get_tumor_by_region(test_df,valid_df):
+    tumord = pd.read_csv('/workspaces/data/brain_meningioma/tumor_centers.csv')
+    tumorGid = tumord.groupby('PatientID')
+    tumorId_R = tumorGid.agg(regionL = ('Region','unique'))
+    tumorIdR1 = tumorId_R[tumorId_R['regionL'].apply(len) == 1]
+    tumorIdR1['regionL'] = tumorId_R['regionL'].apply(lambda x: x[0] )
+    # tumorIdR1['id'] = tumorIdR1.apply(lambda x: x['regionL'].split('-')[3] )
+    tumorIdR1['id'] = tumorIdR1.index.map(lambda x: x.split('-')[3] )
+#  regions = tumorIdR1['regionL'].unique() #tumorIdR1는 1 종량을 가지고 있는 자
+#  for region in regions:
+#   tumordR = tumord[tumord['Region'] == region]
+#   tumordR = tumord[tumord['id'].isin(tumorIdR1['id'])]
+#  
+    test_df['id'] = test_df['masks_paths'].apply(lambda x: os.path.basename(x).split('-')[3])
+    test_df = pd.merge(test_df, tumorIdR1, how='inner', on=['id'])
+    print(test_df.head())
+    dfs_by_region = {id_key: group for id_key, group in test_df.groupby('regionL')}
+    for region, df in dfs_by_region.items():
+        print(f"Processing Region: {region}")
+        create_json_from_dfs_by_id(df, out_parent=f'out-test-ids-{region}-brats2')
+  
+    valid_df['id'] = valid_df['masks_paths'].apply(lambda x: os.path.basename(x).split('-')[3])
+    valid_df = pd.merge(valid_df, tumorIdR1, how='inner', on=['id'])
+    print(valid_df.head())
+    dfs_by_region = {id_key: group for id_key, group in valid_df.groupby('regionL')}
+    for region, df in dfs_by_region.items():
+        print(f"Processing Region: {region}")
+        create_json_from_dfs_by_id(df, out_parent=f'out-valid-ids-{region}-brats2')
+
+
+def get_tumor_by_volume(test_df,valid_df):
+#   tumordR = tumord[tumord['id'].isin(tumorIdR1['id'])]
+    def volumeFunc(names):
+        total = 0
+        for file in names:    
+            total += np.sum(np.load(os.path.join(data_dir, file)) > 0.5) #np.sum(np.load(file) > 0.5)
+        return total
+
+    test_df['id'] = test_df['masks_paths'].apply(lambda x: os.path.basename(x).split('-')[3])
+    df_volume= test_df.groupby('id').aggregate(volume = ('masks_paths', volumeFunc))
+    volumeQ3 = [-np.inf] + [3080, 13858] + [np.inf]
+    labels = list(range(len(volumeQ3) - 1))
+    df_volume['volumeQ'] = pd.cut(df_volume['volume'], bins=volumeQ3, labels=labels)
+    test_df = pd.merge(test_df, df_volume, how='inner', on=['id'])
+
+    # print(test_df.head())
+    dfs_by_volume = {id_key: group for id_key, group in test_df.groupby('volumeQ')}
+    for volume, df in dfs_by_volume.items():
+        print(f"Processing Volume: {volume}")
+        create_json_from_dfs_by_id(df, out_parent=f'out-test-ids-volume{volume}-brats2')
+  
+    valid_df['id'] = valid_df['masks_paths'].apply(lambda x: os.path.basename(x).split('-')[3])
+    df_volumeV= valid_df.groupby('id').aggregate(volume = ('masks_paths', volumeFunc))
+    df_volumeV['volumeQ'] = pd.cut(df_volumeV['volume'], bins=volumeQ3, labels=labels)
+    valid_df = pd.merge(valid_df, df_volumeV, how='inner', on=['id'])
+    # print(valid_df.head())
+    dfs_by_volume = {id_key: group for id_key, group in valid_df.groupby('volumeQ')}
+    for volume, df in dfs_by_volume.items():
+        print(f"Processing Region (Valid): {volume}")
+        create_json_from_dfs_by_id(df, out_parent=f'out-valid-ids-volume{volume}-brats2')
+
 
 if __name__ == '__main__':
     # data_dir = '/workspaces/data/brain_meningioma/slice_old/'
@@ -97,8 +168,17 @@ if __name__ == '__main__':
     data_dir = '/workspaces/data/brain_meningioma/slice/'
     train_df, valid_df, test_df = create_df_brats(data_dir)
 
-    # Create JSON file
-    #create_json_from_dfs(train_df, valid_df, "/workspaces/data/MegaGen/inputs/dataset_split_brats2.json")
+    # get_tumor_by_region(test_df,valid_df)
+    get_tumor_by_volume(test_df,valid_df)
+    
+    #stop and exit
+    import sys
+    sys.exit(0)
+
+    # Create JSON file; is good run
+    create_json_from_dfs(train_df, valid_df, "/workspaces/data/MegaGen/inputs/dataset_split_brats2.json")
+    create_json_from_dfs(valid_df, test_df, "/workspaces/data/MegaGen/inputs/dataset_split_TV_brats2.json")
+
 
     #divide test_df by mask area threshold
     msizeQ3 = [-np.inf] + [187, 605] + [np.inf]

@@ -56,9 +56,18 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, acc_func, ar
                 deep_supervision_weights = [0.05, 0.1, 0.15, 0.2, 0.5]
                 loss = 0
                 for out, w in zip(logits, deep_supervision_weights):
-                    resized_target = torch.nn.functional.interpolate(
-                        target, size=out.shape[2:], mode="nearest")
-                    lossi = loss_func(out, resized_target)
+                    if out[2:].shape != target[2:].shape : 
+                        if args.model.endswith("DU"):
+                            resized_out = \
+                                torch.nn.functional.interpolate(out, size=target.shape[2:], 
+                                                                mode="bilinear",align_corners=False) 
+                            lossi = loss_func(resized_out, target)
+                        else:
+                            resized_target = torch.nn.functional.interpolate(
+                                target, size=out.shape[2:], mode="nearest")
+                            lossi = loss_func(out, resized_target)
+                    else:
+                        lossi = loss_func(out, target)
                     loss += w * lossi
             else:
                 raise ValueError("Unsupported logits length: " + str(len(logits)))
