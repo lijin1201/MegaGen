@@ -241,9 +241,9 @@ class BasicUNetDS(nn.Module):
         self.upcat_1 = UpCat(spatial_dims, fea[1], fea[0], fea[5], act, norm, bias, dropout, upsample, halves=False)
 
         self.final_conv = Conv["conv", spatial_dims](fea[5], out_channels, kernel_size=1)
-        # self.deep_head3 = Conv["conv", spatial_dims](fea[2], out_channels, 1)
-        # self.deep_head2 = Conv["conv", spatial_dims](fea[1], out_channels, 1)
-        # self.deep_head1 = Conv["conv", spatial_dims](fea[5], out_channels, 1)
+        self.deep_head3 = Conv["conv", spatial_dims](fea[2], out_channels, 1)
+        self.deep_head2 = Conv["conv", spatial_dims](fea[1], out_channels, 1)
+        self.deep_head1 = Conv["conv", spatial_dims](fea[5], out_channels, 1)
 
     def forward(self, x: torch.Tensor):
         """
@@ -280,4 +280,4 @@ class BasicUNetDS(nn.Module):
         return [ out_ds3, out_ds2, out_ds1, logits ]
 
 
-BasicUnet = Basicunet = basicunet = BasicUNet
+# BasicUnet = Basicunet = basicunet = BasicUNet

@@ -27,6 +27,7 @@ from model.unet.unet_model import UNet
 from model.mednextv1.MedNextV1 import MedNeXt
 from monai.networks.nets import SwinUNETR as oSwinUNETR
 from model.MedNeXt2D.mednext2d import MedNeXt2D
+from model.UNetDS import BasicUNetDS
 # from networks.UXNet_3D.network_backbone import UXNET
 # from monai.networks.nets import UNETR
 # from networks.MedNeXt.MedNextV1 import MedNeXt
@@ -151,8 +152,10 @@ def main_worker(gpu, args):
     elif args.model == "unet1s":
         model = BasicUNet(spatial_dims=2, features=(32, 64, 128, 256, 512, 32),
                           in_channels=args.in_channels, out_channels=args.out_channels)
+    elif args.model == "unet1sD":
+        model = BasicUNetDS(spatial_dims=2, features=(32, 64, 128, 256, 512, 32),
+                            in_channels=args.in_channels, out_channels=args.out_channels)
     elif args.model == "swinunetr":
-
         model = oSwinUNETR(
             in_channels=args.in_channels,
             out_channels=args.out_channels,

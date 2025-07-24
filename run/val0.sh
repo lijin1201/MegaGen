@@ -184,10 +184,19 @@
 # --pretrained_model_name="swinunetr.pt" \
 # --pretrained_dir="/workspaces/data/MegaGen/logs/brats2-blMask/swinunetr-fs24-e60"
 
-python -m process.post-val0 --model=lg2unetr --json_list="/workspaces/data/MegaGen/inputs/dataset_split_TV_brats2.json" \
+# python -m process.post-val0 --model=lg2unetr --json_list="/workspaces/data/MegaGen/inputs/dataset_split_TV_brats2.json" \
+# --data_dir="/workspaces/data/brain_meningioma/slice" --fold=0 \
+# --in_channels=1 --out_channels=1 \
+# --roi_x=160 --roi_y=192 --feature_size=24 \
+# --batch_size=8 --nbatch_val=1 --batch_dice  \
+# --pretrained_model_name="lg2unetr.pt" \
+# --pretrained_dir="/workspaces/data/MegaGen/logs/brats2-blMask/lg2unetr-fs24-e60"
+
+
+python -m process.post-val0 --model=unet1sD --json_list="/workspaces/data/MegaGen/inputs/dataset_split_TV_brats2.json" \
 --data_dir="/workspaces/data/brain_meningioma/slice" --fold=0 \
 --in_channels=1 --out_channels=1 \
 --roi_x=160 --roi_y=192 --feature_size=24 \
 --batch_size=8 --nbatch_val=1 --batch_dice  \
---pretrained_model_name="lg2unetr.pt" \
---pretrained_dir="/workspaces/data/MegaGen/logs/brats2-blMask/lg2unetr-fs24-e60"
+--pretrained_model_name="unet1sD.pt" \
+--pretrained_dir="/workspaces/data/MegaGen/logs/brats2-blMask/unet1sD-e60"

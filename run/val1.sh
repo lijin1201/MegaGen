@@ -102,12 +102,55 @@
 
 # for key in "Frontal" "Parietal" "Temporal_L" "Temporal_R"
 
-for model in "unetpp0D" # "unetpp0" "unet1s" "swinunetr" # "lg2unetr" 
+
+# for model in "unetpp0D" # "unetpp0" "unet1s" "swinunetr" # "lg2unetr" 
+#     do
+#     for key in "volume0" "volume1" "volume2"
+#         do
+#             python -m process.post-val1 --model=${model} --json_list="/workspaces/data/MegaGen/inputs/dataset_split_TV_brats2.json" \
+#             --data_dir="/workspaces/data/brain_meningioma/slice" \
+#             --test_ids_dir="/workspaces/data/MegaGen/inputs/out-test-ids-${key}-brats2"
+#         done
+#     done
+
+# for prob in 0.1 0.3 0.5 0.7 0.9
+#     do
+#         for model in  "unetpp0D" "unetpp0" "unet1s" "swinunetr" "lg2unetr"
+#         do
+#         echo python -m process.post-val1 --model=${model} --json_list="/workspaces/data/MegaGen/inputs/dataset_split_TV_brats2.json" \
+#         --data_dir="/workspaces/data/brain_meningioma/slice" \
+#         --pred_root="/workspaces/data/brain_meningioma/oProb" \
+#         --exp_name=post-prob1 --probT=$prob \
+#         --test_ids_dir="/workspaces/data/MegaGen/inputs/test-ids-brats2"
+#         done
+#     done
+
+# for model in  "unet1sD" # "unetpp0D" "unetpp0" "unet1s" "swinunetr" "lg2unetr"
+#     do
+#     python -m process.post-val1 --model=$model --json_list="/workspaces/data/MegaGen/inputs/dataset_split_TV_brats2.json" \
+#     --data_dir="/workspaces/data/brain_meningioma/slice" \
+#     --test_ids_dir="/workspaces/data/MegaGen/inputs/test-ids-brats2"
+#     done
+
+
+
+# for model in  "unetpp0D" "unetpp0" "unet1s" "swinunetr" "lg2unetr"
+#     do
+#     for region in "Frontal" "Parietal" "Temporal_L" "Temporal_R"
+#         do
+#         python -m process.post-val1 --model=${model} --json_list="/workspaces/data/MegaGen/inputs/dataset_split_TV_brats2.json" \
+#         --data_dir="/workspaces/data/brain_meningioma/slice" \
+#         --test_ids_dir="/workspaces/data/MegaGen/inputs/out-test-ids-${region}-brats2"
+#         done
+#     done
+
+
+for model in  "unetpp0D" "unetpp0" "unet1s" "swinunetr" "lg2unetr"
     do
-    for key in "volume0" "volume1" "volume2"
+    for region in "FrontalMNI" "ParietalMNI" "TemporalMNI" "OccipitalMNI" "InsulaMNI"
         do
-            python -m process.post-val1 --model=${model} --json_list="/workspaces/data/MegaGen/inputs/dataset_split_TV_brats2.json" \
-            --data_dir="/workspaces/data/brain_meningioma/slice" \
-            --test_ids_dir="/workspaces/data/MegaGen/inputs/out-test-ids-${key}-brats2"
+        python -m process.post-val1 --model=${model} --json_list="/workspaces/data/MegaGen/inputs/dataset_split_TV_brats2.json" \
+        --data_dir="/workspaces/data/brain_meningioma/slice" \
+        --test_ids_dir="/workspaces/data/MegaGen/inputs/out-test-ids-${region}-brats2"
         done
     done

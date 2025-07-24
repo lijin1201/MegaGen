@@ -201,7 +201,7 @@ def get_loader(args, key='training'):
         train_loader = data.DataLoader(
             train_ds,
             batch_size=args.batch_size,
-            shuffle=(train_sampler is None),
+            shuffle=(train_sampler is None) if args.shuffle else False,
             num_workers=args.workers,
             sampler=train_sampler,
             pin_memory=True,

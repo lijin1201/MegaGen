@@ -19,7 +19,7 @@ from monai.networks.nets import SwinUNETR as oSwinUNETR
 from monai.networks.nets import BasicUNet, BasicUNetPlusPlus
 from model.unet.unet_model import UNet
 from monai.transforms import Activations, AsDiscrete
-from monai.metrics import DiceMetric
+from monai.metrics import DiceMetric, compute_iou, MeanIoU, compute_hausdorff_distance, HausdorffDistanceMetric
 from monai.utils.enums import MetricReduction
 
 import matplotlib.pyplot as plt
@@ -29,6 +29,9 @@ from thop import clever_format
 
 from utils.utils import AverageMeter
 from monai.data import decollate_batch
+
+from monai.utils import  optional_import
+rearrange, _ = optional_import("einops", name="rearrange")
 
 parser = argparse.ArgumentParser(description="Swin UNETR segmentation pipeline")
 parser.add_argument("--model", default="lg2unetr", type=str, help="model selection")
@@ -44,6 +47,7 @@ parser.add_argument("--test_ids_dir", default="/workspaces/data/MegaGen/inputs/t
                      help="directory containing test ids json files")
 parser.add_argument("--study", default="test_ids", help="calculate patiend-id sise, or group wise")
 parser.add_argument("--pred_root", default="/workspaces/data/brain_meningioma/pred", type=str, help="prediction dir")
+parser.add_argument("--probT", default="0.5", type=float, help="prob threshold")
 
 
 def main():
@@ -54,6 +58,8 @@ def main():
     data_tag = data_tag.replace("dataset_split_", "")
     args.out_base = args.model + "-" + data_tag
 
+    if args.exp_name == "post-prob1":
+        args.exp_name += f"_{int(args.probT*100):02d}"
     # output_directory = os.path.join(args.pretrained_dir, args.exp_name)
     output_directory = os.path.join(f'/workspaces/data/MegaGen/logs/SCORE/{args.model}', args.exp_name)
     
@@ -73,6 +79,8 @@ def main():
 
     score_id_slice = []
     score_id_flat = []
+    iou_id_flat = []
+    hd95_id_flat = []
     
     def get_score(loaders):
         with torch.no_grad():
@@ -84,12 +92,17 @@ def main():
                 # for idx, batch_data in enumerate(test_loader):
                 for dataDict in test_loader.dataset.data:
                     targetPath =  dataDict["label"]
+                    # print(targetPath)
                     predPath = os.path.split(targetPath)[0].replace(
                         args.data_dir, os.path.join(args.pred_root,args.model))
                     predPath = os.path.split(predPath)[0] + '/' + os.path.split(predPath)[1].replace('npy', 'pt')
                     predPath = os.path.join(predPath,os.path.split(targetPath)[1].replace('npy', 'pt'))
                     target = torch.from_numpy(np.load(targetPath)).unsqueeze(0).unsqueeze(0).cuda(0)
-                    pred = torch.load(predPath,weights_only=False)
+                    if (args.exp_name.startswith('post-prob1')):
+                        post_pred = AsDiscrete(argmax=False, threshold=args.probT)
+                        pred = post_pred(torch.load(predPath,weights_only=False))
+                    else:
+                        pred = torch.load(predPath,weights_only=False)
                     val_all.extend(pred)
                     target_all.extend(target)
                 
@@ -112,10 +125,22 @@ def main():
                         include_background=True, batch=True,
                         reduction="none"  # Important: prevents averaging
                     )
-                
-                acc = 1 - dice_fn(val_all_tensor, target_all_tensor)
-                print(f"Flat Accuracy for one ID: {acc}")
+                #Add IoU metric
+                # iou_fn = MeanIoU()
+                val_all_tensor = rearrange(val_all_tensor, 'b c h w -> c h w b')
+                val_all_tensor = val_all_tensor.unsqueeze(0)
+                target_all_tensor = rearrange(target_all_tensor, 'b c h w -> c h w b')
+                target_all_tensor = target_all_tensor.unsqueeze(0)
+                print ("val_all_tensor.shape", val_all_tensor.shape)
+                iou = compute_iou(val_all_tensor, target_all_tensor)
+                # hd95_fn = HausdorffDistanceMetric(include_background=False, percentile=95.0)
+                hd95 = compute_hausdorff_distance(val_all_tensor, target_all_tensor, percentile=95.0)
+
+                acc = 1 - dice_fn(val_all_tensor, target_all_tensor) #Here dice usiing "batch true"
+                print(f"Flat Accuracy and IoU and HD95 for one ID: {acc} {iou} {hd95}")
                 score_id_flat.append(acc.squeeze(-1).item())
+                iou_id_flat.append(iou.squeeze(-1).item())
+                hd95_id_flat.append(hd95.squeeze(-1).item())
             
             acc_func.reset()
             # print(len(val_aslice), len(target_aslice)) # for debug
@@ -126,6 +151,9 @@ def main():
 
         scoredic = {'score_id_slice': float(np.mean(score_id_slice)), #mean of id's mean  slice score
                     'score_id_flat': float(np.mean(score_id_flat)),
+                    'iou_id_flat': float(np.mean(iou_id_flat)),
+                    'hd95_id_flat': float(np.mean(hd95_id_flat)),
+                    'hd95_id_flat_variance': float(np.var(hd95_id_flat)),
                     'score_aslice':  float(acc_aslice[0].item()) }
         print (scoredic)
         return scoredic
@@ -149,6 +177,7 @@ def main():
 
     test_loaders = []
     valid_loaders = []
+    args.shuffle= False
     for test_ids_json in test_ids_jsons:
         args.json_list = test_ids_json
         test_loaders.append(get_loader(args))

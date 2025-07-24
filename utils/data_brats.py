@@ -99,11 +99,15 @@ def create_json_from_dfs_by_id(df_inp, out_parent ='out-ids-brats2'):
 def get_tumor_by_region(test_df,valid_df):
     tumord = pd.read_csv('/workspaces/data/brain_meningioma/tumor_centers.csv')
     tumorGid = tumord.groupby('PatientID')
-    tumorId_R = tumorGid.agg(regionL = ('Region','unique'))
-    tumorIdR1 = tumorId_R[tumorId_R['regionL'].apply(len) == 1]
-    tumorIdR1['regionL'] = tumorId_R['regionL'].apply(lambda x: x[0] )
-    # tumorIdR1['id'] = tumorIdR1.apply(lambda x: x['regionL'].split('-')[3] )
+    tumorRegions = tumorGid['Region'].value_counts()
+    tumorIdR1 = tumorRegions.groupby(level=0).idxmax().to_frame()
+    tumorIdR1['regionL'] = tumorIdR1['count'].apply(lambda x: x[1])
+    # tumorId_R = tumorGid.agg(regionL = ('Region','unique'))
+    # tumorIdR1 = tumorId_R[tumorId_R['regionL'].apply(len) == 1]
+    # tumorIdR1['regionL'] = tumorId_R['regionL'].apply(lambda x: x[0] )
     tumorIdR1['id'] = tumorIdR1.index.map(lambda x: x.split('-')[3] )
+
+
 #  regions = tumorIdR1['regionL'].unique() #tumorIdR1는 1 종량을 가지고 있는 자
 #  for region in regions:
 #   tumordR = tumord[tumord['Region'] == region]
@@ -124,6 +128,30 @@ def get_tumor_by_region(test_df,valid_df):
     for region, df in dfs_by_region.items():
         print(f"Processing Region: {region}")
         create_json_from_dfs_by_id(df, out_parent=f'out-valid-ids-{region}-brats2')
+
+
+def get_tumor_by_region2(test_df,valid_df):
+    tumorIdR1 = pd.read_csv('/workspaces/data/MegaGen/logs/SCORE/CSVS/id_lobe.csv',dtype=str)
+
+    test_df['id'] = test_df['masks_paths'].apply(lambda x: os.path.basename(x).split('-')[3])
+    print(tumorIdR1.dtypes)
+    test_df = pd.merge(test_df, tumorIdR1, how='inner', on=['id'])
+    print(test_df.head())
+    dfs_by_region = {id_key: group for id_key, group in test_df.groupby('lobe')}
+    for region, df in dfs_by_region.items():
+        print(f"Processing Region: {region}")
+        create_json_from_dfs_by_id(df, out_parent=f'out-test-ids-{region}MNI-brats2')
+  
+    #combine all to valid
+    valid_df['id'] = valid_df['masks_paths'].apply(lambda x: os.path.basename(x).split('-')[3])
+    valid_df = pd.merge(valid_df, tumorIdR1, how='inner', on=['id'])
+    print(valid_df.head())
+    # tv_df = pd.concat([test_df, valid_df])
+    dfs_by_region = {id_key: group for id_key, group in valid_df.groupby('lobe')}
+    for region, df in dfs_by_region.items():
+        print(f"Processing Region: {region}")
+        create_json_from_dfs_by_id(df, out_parent=f'out-valid-ids-{region}MNI-brats2')
+
 
 
 def get_tumor_by_volume(test_df,valid_df):
@@ -169,7 +197,8 @@ if __name__ == '__main__':
     train_df, valid_df, test_df = create_df_brats(data_dir)
 
     # get_tumor_by_region(test_df,valid_df)
-    get_tumor_by_volume(test_df,valid_df)
+    get_tumor_by_region2(test_df,valid_df)
+    # get_tumor_by_volume(test_df,valid_df)
     
     #stop and exit
     import sys
