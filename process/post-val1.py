@@ -83,6 +83,14 @@ def main():
     hd95_id_flat = []
     
     def get_score(loaders):
+        if (len(loaders) == 0):
+            return {'score_id_slice': None,
+                        'score_id_flat': None,
+                        'iou_id_flat': None,
+                        'hd95_id_flat': None,
+                        'hd95_id_flat_variance': None,
+                        'score_aslice':  None }
+            
         with torch.no_grad():
             val_aslice = []
             target_aslice = []

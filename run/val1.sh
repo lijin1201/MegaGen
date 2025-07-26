@@ -147,7 +147,7 @@
 
 for model in  "unetpp0D" "unetpp0" "unet1s" "swinunetr" "lg2unetr"
     do
-    for region in "FrontalMNI" "ParietalMNI" "TemporalMNI" "OccipitalMNI" "InsulaMNI"
+    for region in "ThalamusMNI" # "FrontalMNI" "TemporalMNI" "ParietalMNI" "CerebellumMNI" 
         do
         python -m process.post-val1 --model=${model} --json_list="/workspaces/data/MegaGen/inputs/dataset_split_TV_brats2.json" \
         --data_dir="/workspaces/data/brain_meningioma/slice" \

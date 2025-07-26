@@ -7,3 +7,4 @@ runs
 *.pt
 !unet-250627.pth
 *.onnx
+*.mat

@@ -137,7 +137,7 @@ def get_tumor_by_region2(test_df,valid_df):
     print(tumorIdR1.dtypes)
     test_df = pd.merge(test_df, tumorIdR1, how='inner', on=['id'])
     print(test_df.head())
-    dfs_by_region = {id_key: group for id_key, group in test_df.groupby('lobe')}
+    dfs_by_region = {id_key: group for id_key, group in test_df.groupby('lobe_overlap')}
     for region, df in dfs_by_region.items():
         print(f"Processing Region: {region}")
         create_json_from_dfs_by_id(df, out_parent=f'out-test-ids-{region}MNI-brats2')
@@ -147,7 +147,7 @@ def get_tumor_by_region2(test_df,valid_df):
     valid_df = pd.merge(valid_df, tumorIdR1, how='inner', on=['id'])
     print(valid_df.head())
     # tv_df = pd.concat([test_df, valid_df])
-    dfs_by_region = {id_key: group for id_key, group in valid_df.groupby('lobe')}
+    dfs_by_region = {id_key: group for id_key, group in valid_df.groupby('lobe_overlap')}
     for region, df in dfs_by_region.items():
         print(f"Processing Region: {region}")
         create_json_from_dfs_by_id(df, out_parent=f'out-valid-ids-{region}MNI-brats2')
