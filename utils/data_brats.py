@@ -131,7 +131,7 @@ def get_tumor_by_region(test_df,valid_df):
 
 
 def get_tumor_by_region2(test_df,valid_df):
-    tumorIdR1 = pd.read_csv('/workspaces/data/MegaGen/logs/SCORE/CSVS/id_lobe.csv',dtype=str)
+    tumorIdR1 = pd.read_csv('/workspaces/data/MegaGen/logs/SCORE/CSVS/id_lobe1.csv',dtype=str)
 
     test_df['id'] = test_df['masks_paths'].apply(lambda x: os.path.basename(x).split('-')[3])
     print(tumorIdR1.dtypes)
